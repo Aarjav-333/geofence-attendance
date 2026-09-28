@@ -1,0 +1,51 @@
+-- Geofence Attendance — PostgreSQL schema (PostgreSQL 13+)
+-- Idempotent: safe to run repeatedly (`npm run db:migrate`).
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'geofence_status') THEN
+    CREATE TYPE geofence_status AS ENUM ('WITHIN_RANGE', 'OUTSIDE_RANGE');
+  END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS submissions (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Person
+  name                  text NOT NULL CHECK (char_length(name) BETWEEN 2 AND 100),
+  department            text NOT NULL CHECK (char_length(department) BETWEEN 1 AND 100),
+  member_id             text NOT NULL CHECK (char_length(member_id) BETWEEN 1 AND 50),
+
+  -- Reported position
+  latitude              double precision NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+  longitude             double precision NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+  accuracy_m            double precision NOT NULL CHECK (accuracy_m >= 0),
+  position_captured_at  timestamptz,
+
+  -- Server-computed geofence result
+  distance_m            double precision NOT NULL CHECK (distance_m >= 0),
+  geofence_status       geofence_status NOT NULL,
+  low_accuracy          boolean NOT NULL DEFAULT false,
+
+  -- Snapshot of the geofence config used (the target may change later)
+  target_latitude       double precision NOT NULL,
+  target_longitude      double precision NOT NULL,
+  radius_m              double precision NOT NULL CHECK (radius_m > 0),
+
+  -- Audit metadata
+  client_distance_m     double precision,        -- what the browser claimed (never trusted)
+  user_agent            text CHECK (char_length(user_agent) <= 500),
+  ip_hash               text,                    -- salted SHA-256, raw IP is never stored
+  created_at            timestamptz NOT NULL DEFAULT now(),
+
+  -- The status can never disagree with the stored distance
+  CONSTRAINT status_matches_distance CHECK (
+    (geofence_status = 'WITHIN_RANGE') = (distance_m <= radius_m)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS submissions_created_at_idx      ON submissions (created_at DESC);
+CREATE INDEX IF NOT EXISTS submissions_status_created_idx  ON submissions (geofence_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS submissions_department_idx      ON submissions (department);
+CREATE INDEX IF NOT EXISTS submissions_member_id_idx       ON submissions (member_id);
