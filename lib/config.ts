@@ -42,6 +42,11 @@ export function getDepartmentSuggestions(): string[] {
     .filter(Boolean);
 }
 
+/** IANA timezone used for "Today" and displayed timestamps in the admin dashboard. */
+export function getDisplayTimezone(): string {
+  return process.env.DISPLAY_TIMEZONE?.trim() || "Asia/Kolkata";
+}
+
 export function getDatabaseUrl(): string {
   return required("DATABASE_URL");
 }

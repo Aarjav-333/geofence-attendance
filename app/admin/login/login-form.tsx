@@ -12,7 +12,7 @@ export function LoginForm() {
         <label htmlFor="username" className="mb-1.5 block text-sm font-medium">
           Username
         </label>
-        <input id="username" name="username" className="input" autoComplete="username" required />
+        <input id="username" name="username" className="input" autoComplete="username" required defaultValue={state.username} key={state.username} />
       </div>
       <div>
         <label htmlFor="password" className="mb-1.5 block text-sm font-medium">

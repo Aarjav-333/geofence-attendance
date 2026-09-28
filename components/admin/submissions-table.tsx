@@ -1,3 +1,4 @@
+import { getDisplayTimezone } from "@/lib/config";
 import { formatDistance } from "@/lib/geo";
 import type { Submission } from "@/types/submission";
 
@@ -7,7 +8,7 @@ const dateFmt = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
-  timeZone: process.env.DISPLAY_TIMEZONE || "Asia/Kolkata",
+  timeZone: getDisplayTimezone(),
 });
 
 export function StatusBadge({ status }: { status: Submission["geofenceStatus"] }) {

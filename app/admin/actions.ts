@@ -13,6 +13,7 @@ const loginLimiter = createRateLimiter({ limit: 5, windowMs: 15 * 60 * 1000 });
 
 export interface LoginState {
   error?: string;
+  username?: string;
 }
 
 function safeEqual(a: string, b: string) {
@@ -27,17 +28,17 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
 
   const { allowed, retryAfterS } = loginLimiter(hashIp(clientIp(await headers())));
   if (!allowed) {
-    return { error: `Too many login attempts. Try again in ${Math.ceil(retryAfterS / 60)} minute(s).` };
+    return { error: `Too many login attempts. Try again in ${Math.ceil(retryAfterS / 60)} minute(s).`, username };
   }
   if (!username || !password || password.length > 256) {
-    return { error: "Enter your username and password." };
+    return { error: "Enter your username and password.", username };
   }
 
   const creds = getAdminCredentials();
   // Always run the (slow) password check so timing doesn't reveal valid usernames.
   const passwordOk = await verifyPassword(password, creds.passwordHash);
   if (!safeEqual(username, creds.username) || !passwordOk) {
-    return { error: "Invalid username or password." };
+    return { error: "Invalid username or password.", username };
   }
 
   const token = await createSessionToken(creds.username, getSessionSecret());

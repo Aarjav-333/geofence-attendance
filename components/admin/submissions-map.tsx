@@ -1,8 +1,9 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { latLngBounds } from "leaflet";
-import { Circle, CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
+import { latLngBounds, type LatLngBounds } from "leaflet";
+import { useEffect } from "react";
+import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
 import { formatDistance, type Coordinates, type GeofenceStatus } from "@/lib/geo";
 
 export interface MapPoint {
@@ -39,8 +40,9 @@ export default function SubmissionsMap({ target, radiusMeters, points }: Props) 
       <MapContainer bounds={bounds} scrollWheelZoom={false} className="h-72 w-full sm:h-96">
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <FitBounds bounds={bounds} />
         <Circle
           center={[target.latitude, target.longitude]}
           radius={radiusMeters}
@@ -83,6 +85,18 @@ export default function SubmissionsMap({ target, radiusMeters, points }: Props) 
       </div>
     </section>
   );
+}
+
+/** Re-measure the container once mounted, then fit — the initial size can be stale inside dynamic() */
+function FitBounds({ bounds }: { bounds: LatLngBounds }) {
+  const map = useMap();
+  const key = bounds.toBBoxString();
+  useEffect(() => {
+    map.invalidateSize();
+    map.fitBounds(bounds, { padding: [24, 24] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, key]);
+  return null;
 }
 
 function Legend({ color, label }: { color: string; label: string }) {

@@ -39,7 +39,8 @@ function areaOf(file) {
   const rules = [
     [/^lib\/geo/, "geofence logic"],
     [/^lib\/validation/, "validation"],
-    [/^lib\/auth|^proxy\.ts/, "admin auth"],
+    [/^lib\/(auth|session|password)|^proxy\.ts/, "admin auth"],
+    [/^lib\/config/, "configuration"],
     [/^lib\/db|^database\//, "database"],
     [/^app\/api\//, "API routes"],
     [/^app\/admin|^components\/admin/, "admin UI"],

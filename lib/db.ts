@@ -1,6 +1,6 @@
 import "server-only";
 import postgres from "postgres";
-import { getDatabaseUrl } from "./config";
+import { getDatabaseUrl, getDisplayTimezone } from "./config";
 import type { NewSubmission, Submission, SubmissionFilters, SubmissionStats } from "@/types/submission";
 
 /**
@@ -90,12 +90,12 @@ export async function exportSubmissions(f: SubmissionFilters, limit = 50_000): P
     LIMIT ${limit}`;
 }
 
-export async function getStats(): Promise<SubmissionStats> {
+export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionStats> {
   const [row] = await db()<SubmissionStats[]>`
     SELECT count(*)::int                                                    AS total,
            count(*) FILTER (WHERE geofence_status = 'WITHIN_RANGE')::int    AS within,
            count(*) FILTER (WHERE geofence_status = 'OUTSIDE_RANGE')::int   AS outside,
-           count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS today
+           count(*) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE ${tz}) AT TIME ZONE ${tz})::int AS today
     FROM submissions`;
   return row;
 }
