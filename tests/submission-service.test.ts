@@ -9,7 +9,8 @@ const NOW = Date.UTC(2026, 8, 28, 13, 54);
 
 function setup() {
   const insert = vi.fn(async (s: NewSubmission): Promise<Submission> => {
-    const { ipHash: _ipHash, ...rest } = s;
+    const rest: Omit<NewSubmission, "ipHash"> & { ipHash?: string | null } = { ...s };
+    delete rest.ipHash;
     return { ...rest, id: "00000000-0000-4000-8000-000000000001", createdAt: new Date(NOW) };
   });
   const deps: SubmissionDeps = { geofence: GEOFENCE, lowAccuracyThreshold: 50, insert, now: () => NOW };
