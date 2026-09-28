@@ -10,11 +10,12 @@ if (!password) {
   process.exit(1);
 }
 
-try {
-  const hash = await hashPassword(password);
-  console.log("\nAdd this line to .env.local (and to your hosting provider's env vars):\n");
-  console.log(`ADMIN_PASSWORD_HASH=${hash}\n`);
-} catch (err) {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-}
+hashPassword(password)
+  .then((hash) => {
+    console.log("\nAdd this line to .env.local (and to your hosting provider's env vars):\n");
+    console.log(`ADMIN_PASSWORD_HASH=${hash}\n`);
+  })
+  .catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
