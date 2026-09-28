@@ -1,0 +1,109 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { AdminFilters } from "@/components/admin/filters";
+import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
+import { SubmissionsTable } from "@/components/admin/submissions-table";
+import { filtersToSearch, parseFilters } from "@/lib/admin-filters";
+import { requireAdmin } from "@/lib/auth";
+import { getDepartmentSuggestions, getGeofenceConfig } from "@/lib/config";
+import { getStats, listDepartments, listSubmissions } from "@/lib/db";
+import { logout } from "./actions";
+
+export const metadata: Metadata = { title: "Admin dashboard", robots: { index: false, follow: false } };
+
+export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
+  const session = await requireAdmin();
+  const filters = parseFilters(await searchParams);
+  const geofence = getGeofenceConfig();
+
+  const [stats, departmentsInDb, result] = await Promise.all([getStats(), listDepartments(), listSubmissions(filters)]);
+  const departments = [...new Set([...getDepartmentSuggestions(), ...departmentsInDb])].sort();
+  const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
+
+  return (
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:py-10">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Submissions</h1>
+          <p className="text-sm text-muted">
+            Geofence: {geofence.target.latitude.toFixed(6)}, {geofence.target.longitude.toFixed(6)} · radius{" "}
+            {geofence.radiusMeters} m
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <a href={`/api/admin/export${filtersToSearch(filters, { page: 1 })}`} className="btn-secondary py-2 text-sm">
+            Export CSV
+          </a>
+          <form action={logout}>
+            <button type="submit" className="btn-secondary py-2 text-sm" title={`Signed in as ${session.sub}`}>
+              Sign out
+            </button>
+          </form>
+        </div>
+      </header>
+
+      <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Summary">
+        <Stat label="Total submissions" value={stats.total} />
+        <Stat label={`Within ${geofence.radiusMeters} m`} value={stats.within} tone="ok" />
+        <Stat label={`Outside ${geofence.radiusMeters} m`} value={stats.outside} tone="bad" />
+        <Stat label="Today" value={stats.today} />
+      </section>
+
+      <SubmissionsMap
+        target={geofence.target}
+        radiusMeters={geofence.radiusMeters}
+        points={result.rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          latitude: r.latitude,
+          longitude: r.longitude,
+          accuracyM: r.accuracyM,
+          distanceM: r.distanceM,
+          status: r.geofenceStatus,
+        }))}
+      />
+
+      <AdminFilters departments={departments} />
+
+      <p className="mb-2 text-sm text-muted">
+        {result.total === 0
+          ? "No submissions match these filters."
+          : `Showing ${(result.page - 1) * result.pageSize + 1}–${Math.min(result.page * result.pageSize, result.total)} of ${result.total}`}
+      </p>
+
+      <SubmissionsTable rows={result.rows} />
+
+      {totalPages > 1 && (
+        <nav className="mt-4 flex items-center justify-between text-sm" aria-label="Pagination">
+          {result.page > 1 ? (
+            <Link className="btn-secondary py-2 text-sm" href={`/admin${filtersToSearch(filters, { page: result.page - 1 })}`}>
+              ← Previous
+            </Link>
+          ) : (
+            <span />
+          )}
+          <span className="text-muted">
+            Page {result.page} of {totalPages}
+          </span>
+          {result.page < totalPages ? (
+            <Link className="btn-secondary py-2 text-sm" href={`/admin${filtersToSearch(filters, { page: result.page + 1 })}`}>
+              Next →
+            </Link>
+          ) : (
+            <span />
+          )}
+        </nav>
+      )}
+    </main>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok" | "bad" }) {
+  const color = tone === "ok" ? "text-ok" : tone === "bad" ? "text-bad" : "text-foreground";
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <div className="text-sm text-muted">{label}</div>
+      <div className={`tabular mt-1 text-3xl font-semibold ${color}`}>{value.toLocaleString()}</div>
+    </div>
+  );
+}
