@@ -167,7 +167,8 @@ cp .env.example .env.local
 | `LOW_ACCURACY_THRESHOLD_METERS` | – (50) | Fixes less accurate than this are flagged |
 | `DEPARTMENTS` | – | Comma-separated suggestions for the Department field |
 | `DISPLAY_TIMEZONE` | – (Asia/Kolkata) | Timezone for admin timestamps and the "Today" count |
-| `DATABASE_URL` | ✔ | PostgreSQL connection string |
+| `DATABASE_URL` | ✔ | PostgreSQL connection string. Add `?prepare=false` if your pooler needs it |
+| `DATABASE_SSL` | – (auto) | `disable` \| `require` \| `verify-full`. By default local hosts use no TLS and remote hosts use `verify-full` |
 | `ADMIN_USERNAME` | ✔ | Admin login name |
 | `ADMIN_PASSWORD_HASH` | ✔ | scrypt hash (see below). Never store the plain password |
 | `SESSION_SECRET` | ✔ | ≥32 random characters, used to sign admin sessions |
@@ -254,23 +255,38 @@ The test suite covers:
 
 **Live:** https://geofence-attendance-eta.vercel.app (admin: `/admin`)
 
-Current setup: Vercel project `geofence-attendance` (Hobby). Neon Postgres (free plan) runs in
-`ap-southeast-1` (Singapore), provisioned through the Vercel Marketplace. `vercel.json` pins functions
-to `sin1` so they sit next to the database. `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` are stored as
-Vercel *Sensitive* variables, so `vercel env pull` returns placeholders for them, never the real values.
-Deploys are made from the CLI (`vercel deploy --prod`). The GitHub repo is intentionally **not** connected
-for automatic deploys, because the one-minute auto-push loop would use up the Hobby plan's daily deployment limit.
+Current setup:
+- Vercel project `geofence-attendance` (Hobby plan). `vercel.json` pins functions to `sin1` (Singapore).
+- Neon Postgres (free plan) in `ap-southeast-1` (Singapore), provisioned through the Vercel Marketplace and
+  connected to the **Production and Preview environments only**. Development has no database variables, so
+  `vercel env pull` / `vercel dev` can never point local work at the live database. Local development uses
+  Docker Postgres from `.env.local`.
+- The app connects to Neon over TLS **with certificate verification** (`verify-full`, see `lib/db-options.ts`).
+- `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` are Vercel *Sensitive* variables. Only Production and Preview
+  can hold them. A default (Development) pull leaves them out, and a Production/Preview pull gives an empty
+  value, so keep your local copies in `.env.local` (see "Create the admin account").
+- Deploys are made from the CLI (`vercel deploy --prod`). The GitHub repo is intentionally **not** connected
+  for automatic deploys. With `npm run autopush` pushing every minute, a connected repo would start a production
+  deploy per push (up to about 1,400 a day, against the Hobby plan's 100-a-day limit) and put unreviewed work in progress live.
 
-To set it up from scratch:
+To set it up from scratch (CLI, without connecting the Git repo):
 
-1. Push the repo to GitHub (already set up, see below) and **Import** it at vercel.com/new.
-2. In the Vercel project, open **Storage → Marketplace → Neon (Postgres)**. This injects `DATABASE_URL`.
-3. Add the other variables (`TARGET_*`, `GEOFENCE_RADIUS_METERS`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`,
-   `SESSION_SECRET`, …) under **Settings → Environment Variables**.
-4. Run the migration once against the production database, using the **unpooled** URL:
-   `DATABASE_URL="<DATABASE_URL_UNPOOLED>" npm run db:migrate`. Don't pull production env into
-   `.env.local`, or local dev will write to production.
-5. Deploy. Vercel serves over HTTPS automatically, which geolocation requires.
+1. Install the CLI and link the project: `npm i -g vercel`, `vercel login`, then `vercel link --yes`.
+   Don't use **Import** at vercel.com/new; that connects the repo for automatic deploys (see above).
+2. Provision Neon for Production and Preview only:
+   `vercel integration add neon -m region=sin1 --plan free_v3 --no-env-pull -e production -e preview`.
+   This adds `DATABASE_URL`, `DATABASE_URL_UNPOOLED` and related variables.
+3. Add the app variables (`TARGET_*`, `GEOFENCE_RADIUS_METERS`, `ADMIN_USERNAME`, `DISPLAY_TIMEZONE`, …)
+   with `vercel env add <NAME> production`. Add `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` with `--sensitive`.
+4. Run the migration against the production database. The connection string is read from a file and never
+   put in your shell or its history. The same commands work in bash, PowerShell and cmd:
+   ```bash
+   vercel env pull .env.vercel-production --environment=production --yes
+   npm run db:migrate -- --env-file=.env.vercel-production   # uses DATABASE_URL_UNPOOLED
+   ```
+   Then delete `.env.vercel-production` (`rm` / `del`). It is git-ignored, and Next.js never loads a file with that name.
+   Don't pull production values into `.env.local` or `.env.production.local`, or local runs will write to production.
+5. Deploy with `vercel deploy --prod`. Vercel serves over HTTPS automatically, which geolocation requires.
 
 Any Node.js host works (Render, Fly.io, Railway, a VPS behind nginx with TLS). Run `npm run build && npm start`
 with the same env vars, and put it behind HTTPS.
@@ -326,6 +342,7 @@ descriptive message as usual.
   - Passwords are hashed with scrypt, and credentials are compared in constant time.
   - Sessions are HMAC-SHA256-signed with an 8 h expiry, in an `HttpOnly` + `SameSite=Strict` cookie that is `Secure` in production.
   - Login is rate limited (5 attempts / 15 min per IP), and the dashboard is `noindex`.
+- **Database connections to remote hosts use TLS with full certificate and hostname verification.**
 - **Secrets** live only in environment variables. `.env*` is git-ignored except `.env.example`, which holds
   no secrets. The geofence config is read server-side and passed to the page as props.
 - **Headers:** `Permissions-Policy: geolocation=(self)`, `X-Frame-Options: DENY`, `nosniff`, HSTS,

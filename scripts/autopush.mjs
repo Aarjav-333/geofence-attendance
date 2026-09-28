@@ -24,6 +24,7 @@ const SECRET_PATTERNS = [
   /\.key$/,
   /(^|\/)id_rsa/,
   /credentials\.json$/,
+  /(^|\/)settings\.local\.json$/, // Claude Code approved-command allowlist (may embed credentials)
 ];
 
 function git(...args) {

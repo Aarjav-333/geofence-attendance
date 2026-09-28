@@ -48,4 +48,7 @@ next-env.d.ts
 # agent skills installed by `vercel integration add` (local tooling, not app code)
 .agents/
 .claude/skills/
+
+# Claude Code local settings (can contain approved commands with credentials)
+.claude/settings.local.json
 skills-lock.json

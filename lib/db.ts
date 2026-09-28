@@ -1,6 +1,7 @@
 import "server-only";
 import postgres from "postgres";
 import { getDatabaseUrl, getDisplayTimezone } from "./config";
+import { connectionOptions } from "./db-options";
 import type { NewSubmission, Submission, SubmissionFilters, SubmissionStats } from "@/types/submission";
 
 /**
@@ -13,14 +14,11 @@ const globalForDb = globalThis as unknown as { sql?: postgres.Sql };
 export function db(): postgres.Sql {
   if (!globalForDb.sql) {
     const url = getDatabaseUrl();
-    const isLocal = /@(localhost|127\.0\.0\.1|db)(:|\/)/.test(url);
     globalForDb.sql = postgres(url, {
+      ...connectionOptions(url),
       max: 5,
       idle_timeout: 20,
       connect_timeout: 10,
-      ssl: isLocal ? false : "require",
-      // Transaction-mode poolers (e.g. Neon's "-pooler" host) can't hold named prepared statements
-      prepare: !/-pooler\./.test(url),
       transform: postgres.camel, // snake_case columns → camelCase fields
     });
   }
