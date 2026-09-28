@@ -252,12 +252,24 @@ The test suite covers:
 
 ## Deployment (Vercel + Neon Postgres)
 
+**Live:** https://geofence-attendance-eta.vercel.app (admin: `/admin`)
+
+Current setup: Vercel project `geofence-attendance` (Hobby). Neon Postgres (free plan) runs in
+`ap-southeast-1` (Singapore), provisioned through the Vercel Marketplace. `vercel.json` pins functions
+to `sin1` so they sit next to the database. `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` are stored as
+Vercel *Sensitive* variables, so `vercel env pull` returns placeholders for them, never the real values.
+Deploys are made from the CLI (`vercel deploy --prod`). The GitHub repo is intentionally **not** connected
+for automatic deploys, because the one-minute auto-push loop would use up the Hobby plan's daily deployment limit.
+
+To set it up from scratch:
+
 1. Push the repo to GitHub (already set up, see below) and **Import** it at vercel.com/new.
 2. In the Vercel project, open **Storage → Marketplace → Neon (Postgres)**. This injects `DATABASE_URL`.
 3. Add the other variables (`TARGET_*`, `GEOFENCE_RADIUS_METERS`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`,
    `SESSION_SECRET`, …) under **Settings → Environment Variables**.
-4. Run the migration once against the production database:
-   `DATABASE_URL="<neon url>" npm run db:migrate` (or `vercel env pull .env.local && npm run db:migrate`).
+4. Run the migration once against the production database, using the **unpooled** URL:
+   `DATABASE_URL="<DATABASE_URL_UNPOOLED>" npm run db:migrate`. Don't pull production env into
+   `.env.local`, or local dev will write to production.
 5. Deploy. Vercel serves over HTTPS automatically, which geolocation requires.
 
 Any Node.js host works (Render, Fly.io, Railway, a VPS behind nginx with TLS). Run `npm run build && npm start`
