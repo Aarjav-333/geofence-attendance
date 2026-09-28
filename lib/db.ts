@@ -19,6 +19,8 @@ export function db(): postgres.Sql {
       idle_timeout: 20,
       connect_timeout: 10,
       ssl: isLocal ? false : "require",
+      // Transaction-mode poolers (e.g. Neon's "-pooler" host) can't hold named prepared statements
+      prepare: !/-pooler\./.test(url),
       transform: postgres.camel, // snake_case columns → camelCase fields
     });
   }

@@ -44,3 +44,8 @@ next-env.d.ts
 # local secrets / logs
 *.local
 .autopush.log
+
+# agent skills installed by `vercel integration add` (local tooling, not app code)
+.agents/
+.claude/skills/
+skills-lock.json
