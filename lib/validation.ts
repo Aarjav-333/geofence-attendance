@@ -65,25 +65,36 @@ export function normalizeMobile(input: string): string | null {
   return /^[6-9]\d{9}$/.test(national) ? `+91${national}` : null;
 }
 
-/** Step 2 — employee details, shown only after the server verified the location. */
+/**
+ * Designation / institution: normal text — letters (any script), numbers, spaces and
+ * common punctuation — starting with a letter or number and containing at least one letter.
+ * Rejects symbols such as < > { } @ # $ % * = + | ; that never appear in these names.
+ */
+const ORG_TEXT = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.,&()'’/:-]*$/u;
+const orgText = (label: string, max: number) =>
+  text(label, 2, max)
+    .refine((s) => ORG_TEXT.test(s), `${label} may only contain letters, numbers, spaces and . , & ( ) ' / : -`)
+    .refine((s) => /\p{L}/u.test(s), `${label} must contain letters.`);
+
+/** Step 2 — employee details, shown only after the server verified the location. All fields are required. */
 export const employeeSchema = z.object({
-  name: text("Employee name", 2, 100).refine(
-    (s) => /^[\p{L}\p{M}][\p{L}\p{M}\s.'-]*$/u.test(s),
-    "Name may only contain letters, spaces, apostrophes, periods and hyphens.",
+  name: text("Employee Name", 2, 100).refine(
+    (s) => /^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(s),
+    "Employee Name may only contain letters, spaces, apostrophes, periods and hyphens.",
   ),
-  designation: text("Designation", 2, 100),
-  institution: text("Institution", 2, 150),
+  designation: orgText("Designation", 100),
+  institution: orgText("Institution", 150),
   email: z
     .string({ error: "Email ID is required." })
     .trim()
     .min(1, "Email ID is required.")
     .max(254, "Email ID is too long.")
-    .pipe(z.email("Enter a valid email address, e.g. name@example.com."))
+    .pipe(z.email("Enter a valid email address, e.g. user@example.com."))
     .transform((s) => s.toLowerCase()),
   mobile: z
-    .string({ error: "Mobile number is required." })
+    .string({ error: "Mobile Number is required." })
     .trim()
-    .min(1, "Mobile number is required.")
+    .min(1, "Mobile Number is required.")
     .transform((s, ctx) => {
       const normalized = normalizeMobile(s);
       if (!normalized) {
@@ -95,6 +106,13 @@ export const employeeSchema = z.object({
 });
 
 export type EmployeeInput = z.infer<typeof employeeSchema>;
+export type EmployeeField = keyof typeof employeeSchema.shape;
+
+/** Validate one employee field (for as-you-type feedback). Returns the error message or null. */
+export function validateEmployeeField(field: EmployeeField, value: string): string | null {
+  const r = employeeSchema.shape[field].safeParse(value);
+  return r.success ? null : (r.error.issues[0]?.message ?? "Invalid value.");
+}
 
 /** Check In request: employee details + the signed location verification from step 1. */
 export const checkInSchema = employeeSchema.extend({
