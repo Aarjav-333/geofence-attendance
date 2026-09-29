@@ -12,7 +12,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "typecheck": "tsc --noEmit",
-    "test:db": "vitest run --config vitest.db.config.mts"
+    "test:db": "vitest run --config vitest.db.config.mts",
+    "db:seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

@@ -273,6 +273,22 @@ so check-ins and the dashboard keep working while it runs. The dashboard shows w
 The migration is additive and idempotent. Existing rows are untouched, and `npm run db:migrate` upgrades an existing
 database in place.
 
+#### Test data (optional)
+```bash
+npm run db:seed                  # 40 check-ins + 8 older-style registrations
+npm run db:seed -- --reset       # replace previously seeded data (identical data every time)
+npm run db:seed -- --count=100   # a different number of check-ins
+npm run db:seed -- --remove      # remove seed data only
+```
+The data is realistic but clearly fake:
+- names at local institutions, `@example.com` emails and `+91 90000 xxxxx` mobile numbers
+- check-ins spread over the last week, some near the 100 m edge and some flagged low-accuracy
+- older-style department/ID records, half of them outside the geofence
+
+Distances are computed with the app's own geofence code for the configured `TARGET_*`. Seed rows are tagged
+(`user_agent = seed-script`), so `--reset` and `--remove` never touch real records. The script **refuses to run
+against a non-local database**, so test data can't reach production.
+
 ### 4. Create the admin account
 ```bash
 npm run hash-password -- "a-long-unique-password"
