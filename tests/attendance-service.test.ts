@@ -132,6 +132,8 @@ describe("checkIn — authoritative server-side re-check and storage", () => {
       clientDistanceM: null,
     });
     expect(saved.verificationId).toMatch(/^[0-9a-f-]{36}$/);
+    // The replay guard keeps the verification until it expires (independent of the attendance table)
+    expect(saved.verificationExpiresAt?.getTime()).toBe((Math.floor(NOW / 1000) + VERIFICATION_TTL_S) * 1000);
   });
 
   it("7. direct submission without a location verification is refused", async () => {

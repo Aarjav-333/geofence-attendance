@@ -32,6 +32,8 @@ export interface Submission {
 
 export type NewSubmission = Omit<Submission, "id" | "createdAt" | "department" | "memberId"> & {
   ipHash: string | null;
+  /** When the location verification expires; kept in used_verifications until then (replay guard). */
+  verificationExpiresAt: Date | null;
 };
 
 export interface SubmissionFilters {

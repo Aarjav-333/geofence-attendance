@@ -48,25 +48,54 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   redirect("/admin");
 }
 
-export type ClearAllResult = { ok: true; deleted: number } | { ok: false; error: string };
+export type ClearAllResult =
+  | { ok: true; deleted: number }
+  | { ok: false; code: "UNAUTHENTICATED" | "SERVER_ERROR" | "DB_ERROR"; error: string };
 
 /**
  * Delete ALL attendance records. Server actions are reachable by direct POST, so
  * the admin check here is the real guard — hiding the button is not.
  */
 export async function clearAllAttendance(): Promise<ClearAllResult> {
-  const session = await getAdminSession();
-  if (!session) return { ok: false, error: "You are not authorized to clear attendance data. Please sign in again." };
-
+  // 1. Authorization. A failure here (e.g. misconfigured SESSION_SECRET) happens
+  //    before any deletion, so it's safe to say nothing was deleted.
+  let session;
   try {
-    const deleted = await deleteAllSubmissions();
-    console.info(`[admin] ${session.sub} cleared all attendance data (${deleted} record(s))`);
-    revalidatePath("/admin");
-    return { ok: true, deleted };
+    session = await getAdminSession();
+  } catch (err) {
+    console.error("[admin] clear all: could not check the admin session", err);
+    return {
+      ok: false,
+      code: "SERVER_ERROR",
+      error: "Server configuration error — the data was not cleared. Check the server logs.",
+    };
+  }
+  if (!session) {
+    return { ok: false, code: "UNAUTHENTICATED", error: "Your session has expired. Please sign in again." };
+  }
+
+  // 2. The delete itself. If the database call fails we can't be certain whether it
+  //    committed (e.g. the connection dropped afterwards), so don't claim either way.
+  let deleted: number;
+  try {
+    deleted = await deleteAllSubmissions();
   } catch (err) {
     console.error("[admin] clear all attendance data failed", err);
-    return { ok: false, error: "Could not clear the attendance data. Nothing was deleted — please try again." };
+    return {
+      ok: false,
+      code: "DB_ERROR",
+      error: "The database reported an error while clearing the data. Refresh the page to see what is currently stored.",
+    };
   }
+
+  // 3. Housekeeping after a successful delete must never turn success into an error.
+  console.info(`[admin] ${session.sub} cleared all attendance data (${deleted} record(s))`);
+  try {
+    revalidatePath("/admin");
+  } catch (err) {
+    console.error("[admin] clear all: revalidatePath failed (data was deleted)", err);
+  }
+  return { ok: true, deleted };
 }
 
 export async function logout() {

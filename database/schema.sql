@@ -80,3 +80,21 @@ $$;
 
 CREATE INDEX IF NOT EXISTS submissions_institution_idx ON submissions (institution);
 CREATE INDEX IF NOT EXISTS submissions_email_idx       ON submissions (email);
+
+-- ── v3: replay protection independent of attendance data ───────────────────
+-- Every location verification that has been used for a check-in, kept until it
+-- expires. Lives outside `submissions` so "Clear All Data" can't make a used
+-- verification valid again. Expired rows are pruned on insert.
+CREATE TABLE IF NOT EXISTS used_verifications (
+  verification_id uuid PRIMARY KEY,
+  expires_at      timestamptz NOT NULL,
+  used_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS used_verifications_expires_idx ON used_verifications (expires_at);
+
+-- Backfill from check-ins stored before this table existed (verifications live 10 minutes)
+INSERT INTO used_verifications (verification_id, expires_at, used_at)
+SELECT verification_id, created_at + interval '10 minutes', created_at
+FROM submissions
+WHERE verification_id IS NOT NULL AND created_at > now() - interval '10 minutes'
+ON CONFLICT (verification_id) DO NOTHING;

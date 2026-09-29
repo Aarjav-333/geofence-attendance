@@ -228,6 +228,7 @@ export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDep
       radiusM: deps.geofence.radiusMeters,
       clientDistanceM: null,
       verificationId: claims.jti,
+      verificationExpiresAt: new Date(claims.exp * 1000),
       userAgent: meta.userAgent?.slice(0, 500) ?? null,
       ipHash: meta.ipHash,
     });

@@ -260,6 +260,10 @@ Constraints:
   check-in (all five employee fields plus a verification ID) that is `WITHIN_RANGE`.
 
 Indexes: `created_at DESC`, `(geofence_status, created_at DESC)`, `institution`, `email`, `department`, `member_id`.
+A second table, `used_verifications` (`verification_id` PK, `expires_at`), records every location verification that
+has been used, until it expires. It sits outside `submissions`, so **Clear All Data** (which empties `submissions` only)
+can't make a used verification valid again. Expired rows are pruned automatically.
+
 The migration is additive and idempotent. Existing rows are untouched, and `npm run db:migrate` upgrades an existing
 database in place.
 

@@ -27,13 +27,29 @@ export function db(): postgres.Sql {
 
 const MAX_PAGE_SIZE = 200;
 
-const COLUMNS = (sql: postgres.Sql) => sql`
+const COLUMNS = (sql: postgres.Sql | postgres.TransactionSql) => sql`
   id, name, designation, institution, email, mobile, department, member_id,
   latitude, longitude, accuracy_m, position_captured_at, distance_m, geofence_status, low_accuracy,
   target_latitude, target_longitude, radius_m, client_distance_m, verification_id, user_agent, created_at`;
 
+/**
+ * Store a check-in. The verification is first claimed in `used_verifications`
+ * (same transaction), so a verification can never be used twice — even after
+ * "Clear All Data" empties `submissions`. A second claim raises 23505.
+ */
 export async function insertSubmission(s: NewSubmission): Promise<Submission> {
-  const sql = db();
+  return db().begin(async (sql) => {
+    if (s.verificationId) {
+      await sql`DELETE FROM used_verifications WHERE expires_at < now() - interval '1 hour'`;
+      await sql`
+        INSERT INTO used_verifications (verification_id, expires_at)
+        VALUES (${s.verificationId}, ${s.verificationExpiresAt ?? new Date(Date.now() + 10 * 60 * 1000)})`;
+    }
+    return insertSubmissionRow(sql, s);
+  }) as Promise<Submission>;
+}
+
+async function insertSubmissionRow(sql: postgres.TransactionSql, s: NewSubmission): Promise<Submission> {
   const [row] = await sql<Submission[]>`
     INSERT INTO submissions (
       name, designation, institution, email, mobile,

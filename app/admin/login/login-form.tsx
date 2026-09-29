@@ -8,7 +8,17 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <form action={action} className="space-y-4 rounded-2xl border border-border bg-surface p-5 shadow-sm">
+    <form
+      action={action}
+      onSubmit={(e) => {
+        // Always submit as a password field (so browsers don't store it as ordinary
+        // form history) and keep it hidden for the next attempt if login fails.
+        const field = e.currentTarget.elements.namedItem("password");
+        if (field instanceof HTMLInputElement) field.type = "password";
+        setShowPassword(false);
+      }}
+      className="space-y-4 rounded-2xl border border-border bg-surface p-5 shadow-sm"
+    >
       <div>
         <label htmlFor="username" className="mb-1.5 block text-sm font-medium">
           Username

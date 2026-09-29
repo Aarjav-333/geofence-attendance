@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { clearAllAttendance } from "@/app/admin/actions";
 
@@ -8,6 +9,7 @@ import { clearAllAttendance } from "@/app/admin/actions";
  * confirmation. Authorization is enforced by the server action, not by this button.
  */
 export function ClearAllData({ total }: { total: number }) {
+  const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
@@ -31,6 +33,10 @@ export function ClearAllData({ total }: { total: number }) {
       try {
         const r = await clearAllAttendance();
         dialogRef.current?.close();
+        if (!r.ok && r.code === "UNAUTHENTICATED") {
+          router.replace("/admin/login"); // session expired: nothing was deleted, sign in again
+          return;
+        }
         setMessage(
           r.ok
             ? { tone: "ok", text: `All attendance data has been cleared successfully (${r.deleted} record${r.deleted === 1 ? "" : "s"} deleted).` }
@@ -38,8 +44,9 @@ export function ClearAllData({ total }: { total: number }) {
         );
       } catch {
         dialogRef.current?.close();
-        // The request may or may not have reached the server, so don't claim either outcome.
-        setMessage({ tone: "bad", text: "Could not confirm the result (connection problem). Refresh the page to see the current data, then try again if needed." });
+        // No response (network failure or server crash): the request may or may not have
+        // been processed, so don't claim either outcome.
+        setMessage({ tone: "bad", text: "Could not confirm the result (no response from the server). Refresh the page to see the current data, then try again if needed." });
       } finally {
         inFlight.current = false;
       }
