@@ -24,6 +24,37 @@ export function StatusBadge({ status }: { status: Submission["geofenceStatus"] }
   );
 }
 
+/** Legacy registrations (before QR check-in) have department/ID instead of the new fields. */
+const isLegacy = (r: Submission) => r.verificationId === null;
+
+function Dash() {
+  return <span className="text-muted">—</span>;
+}
+
+function Contact({ r }: { r: Submission }) {
+  return (
+    <>
+      {r.email ? (
+        <a href={`mailto:${r.email}`} className="break-all text-accent hover:underline">
+          {r.email}
+        </a>
+      ) : (
+        <Dash />
+      )}
+    </>
+  );
+}
+
+function Mobile({ r }: { r: Submission }) {
+  return r.mobile ? (
+    <a href={`tel:${r.mobile}`} className="whitespace-nowrap font-mono text-xs hover:underline">
+      {r.mobile}
+    </a>
+  ) : (
+    <Dash />
+  );
+}
+
 function Details({ r }: { r: Submission }) {
   const mapsUrl = `https://www.google.com/maps?q=${r.latitude},${r.longitude}`;
   const drift = r.clientDistanceM != null ? Math.abs(r.clientDistanceM - r.distanceM) : null;
@@ -45,6 +76,14 @@ function Details({ r }: { r: Submission }) {
         <dd>
           {r.targetLatitude.toFixed(6)}, {r.targetLongitude.toFixed(6)} · {r.radiusM} m
         </dd>
+        {isLegacy(r) && (
+          <>
+            <dt className="text-muted">Record type</dt>
+            <dd>
+              Earlier registration — dept. {r.department ?? "—"}, ID {r.memberId ?? "—"}
+            </dd>
+          </>
+        )}
         {drift != null && drift > 1 && (
           <>
             <dt className="text-muted">Client claimed</dt>
@@ -72,13 +111,15 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-border text-xs uppercase tracking-wide text-muted">
             <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Department</th>
-              <th className="px-4 py-3 font-medium">ID</th>
-              <th className="px-4 py-3 text-right font-medium">Distance</th>
-              <th className="px-4 py-3 font-medium">Location status</th>
-              <th className="px-4 py-3 font-medium">Time</th>
-              <th className="px-4 py-3 font-medium">
+              <th className="px-3 py-3 font-medium">Employee Name</th>
+              <th className="px-3 py-3 font-medium">Designation</th>
+              <th className="px-3 py-3 font-medium">Institution</th>
+              <th className="px-3 py-3 font-medium">Email</th>
+              <th className="px-3 py-3 font-medium">Mobile Number</th>
+              <th className="px-3 py-3 text-right font-medium">Distance</th>
+              <th className="px-3 py-3 font-medium">Location Status</th>
+              <th className="px-3 py-3 font-medium">Check-In Time</th>
+              <th className="px-3 py-3 font-medium">
                 <span className="sr-only">Details</span>
               </th>
             </tr>
@@ -86,10 +127,16 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
           <tbody className="divide-y divide-border">
             {rows.map((r) => (
               <tr key={r.id} className="align-top">
-                <td className="px-4 py-3 font-medium">{r.name}</td>
-                <td className="px-4 py-3">{r.department}</td>
-                <td className="px-4 py-3 font-mono text-xs">{r.memberId}</td>
-                <td className="tabular px-4 py-3 text-right">
+                <td className="px-3 py-3 font-medium">{r.name}</td>
+                <td className="px-3 py-3">{r.designation ?? <Dash />}</td>
+                <td className="px-3 py-3">{r.institution ?? <Dash />}</td>
+                <td className="max-w-56 px-3 py-3">
+                  <Contact r={r} />
+                </td>
+                <td className="px-3 py-3">
+                  <Mobile r={r} />
+                </td>
+                <td className="tabular whitespace-nowrap px-3 py-3 text-right">
                   {formatDistance(r.distanceM)}
                   {r.lowAccuracy && (
                     <div className="text-xs text-warn" title="GPS accuracy was worse than the configured threshold">
@@ -97,11 +144,11 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-3">
                   <StatusBadge status={r.geofenceStatus} />
                 </td>
-                <td className="tabular whitespace-nowrap px-4 py-3">{dateFmt.format(new Date(r.createdAt))}</td>
-                <td className="px-4 py-3">
+                <td className="tabular whitespace-nowrap px-3 py-3">{dateFmt.format(new Date(r.createdAt))}</td>
+                <td className="px-3 py-3">
                   <Details r={r} />
                 </td>
               </tr>
@@ -115,14 +162,20 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
         {rows.map((r) => (
           <li key={r.id} className="rounded-xl border border-border bg-surface p-4 text-sm">
             <div className="flex items-start justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <div className="font-medium">{r.name}</div>
                 <div className="text-muted">
-                  {r.department} · <span className="font-mono text-xs">{r.memberId}</span>
+                  {isLegacy(r) ? `${r.department ?? ""} · ${r.memberId ?? ""}` : `${r.designation} · ${r.institution}`}
                 </div>
               </div>
               <StatusBadge status={r.geofenceStatus} />
             </div>
+            {!isLegacy(r) && (
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                <Contact r={r} />
+                <Mobile r={r} />
+              </div>
+            )}
             <div className="tabular mt-2 flex justify-between text-muted">
               <span>
                 {formatDistance(r.distanceM)}

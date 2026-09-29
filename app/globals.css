@@ -58,6 +58,13 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
+
 @utility input {
   @apply w-full rounded-lg border border-border bg-surface px-3.5 py-3 text-base text-foreground outline-none transition placeholder:text-muted/70 focus:border-accent focus:ring-3 focus:ring-accent/20 aria-invalid:border-bad;
 }

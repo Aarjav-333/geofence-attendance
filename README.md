@@ -1,55 +1,86 @@
 # Geofence Attendance
 
-A focused, production-oriented web app for **location-verified registration / attendance**.
-Visitors fill in a short form (name, department, employee/student ID), share their GPS location
-once, and the server verifies whether they are within **100 m** of a designated point.
-Administrators review every submission, with its distance and `WITHIN_RANGE` / `OUTSIDE_RANGE` status,
+A focused, production-oriented web app for **QR-based, location-verified workplace attendance**.
+Employees scan a QR code displayed at the workplace, which opens the attendance page. They share their
+GPS location, and the **server** verifies they are within **100 m** of the workplace. Only then does the
+check-in form appear. Administrators review every check-in, with its distance and geofence status,
 on a protected dashboard.
 
 ---
 
 ## Features
 
-**Public form** (`/`)
-- No account or login required. The form is mobile-first and responsive, with dark mode.
-- Location is read with the browser Geolocation API **only after the user taps "Get my location"**,
-  which triggers the browser's permission prompt. A notice explains why location is collected.
-- The distance and status appear straight away ("✓ Within 100 meters" / "✗ Outside 100 meters"), along with the
-  coordinates and reported accuracy. Poor-accuracy fixes show a warning.
-- Clear messages for each failure: permission denied, GPS unavailable, timeout, unsupported
-  browser, insecure (HTTP) context, invalid coordinates, expired reading, network or server failure, rate limit.
-- Submit is disabled until a location has been obtained. A receipt shows the **server-verified** result.
+**Attendance page** (`/attendance`, opened by the workplace QR code; `/` redirects here)
+- No account or login required. The page is mobile-first and responsive, with dark mode.
+- **The form is not shown on page load.** The flow is:
+  1. The employee taps **Detect My Location**. The browser asks for location permission, and the page reads
+     latitude, longitude and accuracy once through the Geolocation API.
+  2. The raw fix is sent to `POST /api/attendance/verify`. The **server** computes the distance to the workplace.
+  3. **Inside 100 m:** the page shows "Location verified ✓" with the distance, then the check-in form. The server
+     also returns a signed verification that is valid for 10 minutes.
+     **Outside 100 m:** the page shows "Location verification failed", the distance and the requirement. No form is
+     shown and Check In is impossible.
+  4. The employee enters **Employee Name, Designation, Institution, Email ID and Mobile Number**, then taps **Check In**.
+  5. `POST /api/attendance/check-in` recomputes the geofence and stores the check-in, and the page shows
+     "Check-In Successful ✓" with the time.
+- Clear messages, each with a retry option, for: permission denied, location unavailable, GPS timeout, unsupported
+  browser, insecure (HTTP) context, invalid coordinates, poor accuracy (worse than ±150 m), stale readings,
+  expired verification, network or server failure, and rate limiting.
 
 **Server-side verification**
-- The server recomputes the distance with Haversine and decides the status itself. Any status or
-  distance sent by the client is ignored.
-- Every field is validated with Zod (lengths, character sets, lat/lon ranges, accuracy, fix age).
-- A database `CHECK` constraint makes it impossible to store a status that contradicts the stored distance.
+- The server computes the distance with Haversine and decides the status itself, both at verification and again at
+  check-in. The check-in request contains **no coordinates, distance or status**. The coordinates come only from
+  the server-signed verification, and they are re-checked against the *current* workplace configuration.
+  Any status or distance sent by the client is ignored.
+- Each verification can be used for **one** check-in (`verification_id` is `UNIQUE`). Verifications expire after 10 minutes.
+- Every field is validated with Zod: lengths, character sets, email format, and mobile number format (stored as E.164,
+  e.g. `+919876543210`). Latitude and longitude ranges, accuracy and fix age are validated too.
+- Database `CHECK` constraints make it impossible to store a status that contradicts the stored distance, or a
+  check-in that is incomplete or outside the geofence.
+
+**Workplace QR code** (`/admin/qr`, authenticated)
+- Shows a printable poster with a QR code that encodes only the public attendance URL
+  (for example `https://geofence-attendance-eta.vercel.app/attendance`), with no location or personal data.
+- **Download PNG** (~1200 px), **Download SVG**, **Print** (the print layout shows only the poster) and **Copy link**.
+- The QR code is a convenience, **not** a security control. Opening the URL directly still requires passing the
+  server-side location check.
 
 **Admin dashboard** (`/admin`, authenticated)
-- Totals: all submissions, within 100 m, outside 100 m, today.
-- A map (Leaflet + OpenStreetMap) shows the geofence circle and green/red submission markers.
-- Search by name, ID or department. Filter by department and status. Sort newest or oldest first. Results are paginated.
-- For each row: distance, status badge, time, and a **Details** panel with exact coordinates (with a Google Maps
-  link), accuracy, GPS-fix time, the target and radius used, the device, and any mismatch between the client's claimed distance and the server's.
+- Totals: all check-ins, within 100 m, outside 100 m (earlier records only), today.
+- A map (Leaflet + OpenStreetMap) shows the workplace geofence and green/red markers for each record.
+- Columns: Employee Name, Designation, Institution, Email, Mobile Number, Distance, Location Status, Check-In Time.
+- Search by name, email, mobile, designation or institution. Filter by institution and status. Sort newest or oldest first.
+  Results are paginated.
+- A **Details** panel per row shows exact coordinates (with a Google Maps link), accuracy, GPS-fix time, the target and
+  radius used, the device and the record reference.
 - **CSV export** of the current filtered view, with protection against spreadsheet formula injection.
+- Records from the earlier registration form (department and ID) are kept and marked as earlier registrations.
 
 ---
 
 ## Architecture
 
 ```
+Workplace QR code ──► /attendance  (Server Component; knows only the radius)
+                          │
 Browser (React client component)
   │  navigator.geolocation.getCurrentPosition()  ← explicit user action + permission prompt
-  │  evaluateGeofence() → instant feedback (not trusted)
   ▼
-POST /api/submissions  (Next.js Route Handler, Node.js runtime)
-  │  rate limit → JSON parse (≤4 KB) → Zod validation → fix-age check
+POST /api/attendance/verify   (Route Handler)
+  │  rate limit → Zod (lat/lon/accuracy/timestamp) → fix-age + accuracy checks
   │  evaluateGeofence() with TARGET_* from env   ← authoritative
+  │  WITHIN_RANGE → HMAC-signed verification {coords, accuracy, jti, exp}   (nothing stored)
+  ▼
+Check-in form (rendered only after WITHIN_RANGE)
+  ▼
+POST /api/attendance/check-in
+  │  Zod (name, designation, institution, email, mobile) → verify signature + expiry
+  │  evaluateGeofence() AGAIN from the signed coordinates  ← authoritative
+  │  WITHIN_RANGE → INSERT (verification_id UNIQUE)          OUTSIDE → 403
   ▼
 PostgreSQL  submissions table (CHECK constraints + indexes)
   ▲
-/admin (Server Component)  ← proxy.ts redirect + requireAdmin() in page/route/action
+/admin, /admin/qr (Server Components)  ← proxy.ts redirect + requireAdmin() in page/route/action
 ```
 
 **Why this stack**
@@ -67,27 +98,31 @@ PostgreSQL  submissions table (CHECK constraints + indexes)
 ```
 geofence-attendance/
 ├── app/
-│   ├── page.tsx                  # Public registration page (reads geofence config server-side)
+│   ├── page.tsx                  # Redirects / → /attendance
+│   ├── attendance/page.tsx       # Attendance page opened by the QR code
 │   ├── layout.tsx, globals.css
 │   ├── admin/
 │   │   ├── page.tsx              # Dashboard (protected)
+│   │   ├── qr/page.tsx           # Printable workplace QR code (protected)
 │   │   ├── actions.ts            # login / logout server actions
 │   │   └── login/                # Sign-in page + form
 │   └── api/
-│       ├── submissions/route.ts  # POST: validate, verify geofence, store
-│       └── admin/export/route.ts # GET: CSV export (protected)
+│       ├── attendance/verify/route.ts    # POST: server geofence check → signed verification
+│       ├── attendance/check-in/route.ts  # POST: validate, re-check geofence, store
+│       └── admin/export/route.ts         # GET: CSV export (protected)
 ├── components/
-│   ├── registration-form.tsx     # Form, geolocation flow, receipt
-│   ├── location-status.tsx       # Location permission/result UI
-│   └── admin/                    # Filters, table, map
+│   ├── attendance/attendance-flow.tsx    # Location → verification → form → check-in UI
+│   └── admin/                    # Filters, table, map, QR actions
 ├── lib/
-│   ├── geo.ts                    # Haversine, geofence evaluation (pure, shared)
-│   ├── validation.ts             # Zod submission schema (shared)
-│   ├── submission-service.ts     # Server-side processing (framework-free, unit-tested)
+│   ├── geo.ts                    # Haversine, geofence evaluation (pure)
+│   ├── validation.ts             # Zod schemas: location fix, employee details, mobile normalization
+│   ├── attendance-service.ts     # verifyLocation() / checkIn() (framework-free, unit-tested)
+│   ├── signed-token.ts           # HMAC-signed tokens (admin sessions + location verifications)
 │   ├── config.ts                 # Env-driven configuration (server-only)
-│   ├── db.ts                     # PostgreSQL queries
+│   ├── db.ts, db-options.ts      # PostgreSQL queries + connection options
+│   ├── qr.ts, qr-path.ts         # QR encoding (server) + SVG path rendering
 │   ├── session.ts, password.ts, auth.ts   # Admin authentication
-│   ├── rate-limit.ts, request.ts, admin-filters.ts
+│   ├── rate-limit.ts, request.ts, http.ts, admin-filters.ts
 ├── database/schema.sql           # Tables, enum, constraints, indexes
 ├── proxy.ts                      # Redirects unauthenticated /admin requests
 ├── scripts/
@@ -104,16 +139,17 @@ geofence-attendance/
 
 ## How geofencing works
 
-1. **Obtain position.** When the user taps *Get my location*, the browser calls
+1. **Obtain position.** When the employee taps *Detect My Location*, the browser calls
    `navigator.geolocation.getCurrentPosition()` with `{ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }`.
    The browser shows its permission prompt. On success it returns `latitude`, `longitude`, `accuracy`
    (a 68%-confidence radius in meters) and a `timestamp`. The API only works in a **secure context**
    (HTTPS or `localhost`).
-2. **Preview on the client.** The same `evaluateGeofence()` function the server uses runs in the browser
-   for instant feedback. This is only a preview.
-3. **Verify on the server.** On submit, the API receives only raw coordinates, accuracy and fix time.
-   It validates them, then computes the distance to `TARGET_LATITUDE` / `TARGET_LONGITUDE` and applies
-   the rule:
+2. **Reject unusable fixes.** The server refuses fixes older than 2 minutes, and fixes whose accuracy is
+   worse than `MAX_ACCURACY_METERS` (default ±150 m). At that uncertainty, a 100 m geofence can't be judged.
+3. **Verify on the server.** `/api/attendance/verify` receives only raw coordinates, accuracy and fix time.
+   It computes the distance to `TARGET_LATITUDE` / `TARGET_LONGITUDE` and applies the rule below.
+   The browser never receives the workplace coordinates and never computes the status itself.
+   `/api/attendance/check-in` applies the same rule again to the signed coordinates before storing anything.
 
    ```
    distance ≤ GEOFENCE_RADIUS_METERS  →  WITHIN_RANGE
@@ -161,28 +197,30 @@ cp .env.example .env.local
 
 | Variable | Required | Description |
 |---|---|---|
-| `TARGET_LATITUDE` | ✔ | Latitude of the designated location (decimal degrees) |
-| `TARGET_LONGITUDE` | ✔ | Longitude of the designated location |
+| `TARGET_LATITUDE` | ✔ | Latitude of the authorized workplace (decimal degrees) |
+| `TARGET_LONGITUDE` | ✔ | Longitude of the authorized workplace |
 | `GEOFENCE_RADIUS_METERS` | – (100) | Allowed radius in meters |
-| `LOW_ACCURACY_THRESHOLD_METERS` | – (50) | Fixes less accurate than this are flagged |
-| `DEPARTMENTS` | – | Comma-separated suggestions for the Department field |
+| `LOW_ACCURACY_THRESHOLD_METERS` | – (50) | Fixes less accurate than this are accepted but flagged |
+| `MAX_ACCURACY_METERS` | – (150) | Fixes less accurate than this are rejected as insufficient |
+| `APP_URL` | – (auto) | Base URL encoded in the QR code. Defaults to the Vercel production domain, then to the current host |
 | `DISPLAY_TIMEZONE` | – (Asia/Kolkata) | Timezone for admin timestamps and the "Today" count |
 | `DATABASE_URL` | ✔ | PostgreSQL connection string. Add `?prepare=false` if your pooler needs it |
 | `DATABASE_SSL` | – (auto) | `disable` \| `require` \| `verify-full`. By default local hosts use no TLS and remote hosts use `verify-full` |
 | `ADMIN_USERNAME` | ✔ | Admin login name |
 | `ADMIN_PASSWORD_HASH` | ✔ | scrypt hash (see below). Never store the plain password |
-| `SESSION_SECRET` | ✔ | ≥32 random characters, used to sign admin sessions |
+| `SESSION_SECRET` | ✔ | ≥32 random characters. Signs admin sessions and location verifications (with separate derived keys) |
 
-Coordinate configuration used for this deployment:
+Workplace configuration used for this deployment:
 
 ```env
-TARGET_LATITUDE=8.54612616725849
-TARGET_LONGITUDE=76.90465781805145
+TARGET_LATITUDE=8.546013910592666
+TARGET_LONGITUDE=76.90652146747094
 GEOFENCE_RADIUS_METERS=100
 ```
 
-To move the geofence, change these values and restart or redeploy. No code changes are needed. Each
-submission stores the target and radius that were in effect, so historical records stay auditable.
+To move the geofence, change these values and restart or redeploy. No code changes are needed, and the QR code
+stays the same. Each record stores the target and radius that were in effect, so historical records stay auditable.
+A verification issued before a move is re-checked against the new location at check-in.
 
 ### 3. Database
 ```bash
@@ -195,7 +233,12 @@ Schema (`database/schema.sql`):
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | `gen_random_uuid()` |
-| `name`, `department`, `member_id` | text | length `CHECK`s |
+| `name` | text | employee name, 2–100 chars |
+| `designation`, `institution` | text | check-ins; length `CHECK`s |
+| `email` | text | check-ins; stored lower-case |
+| `mobile` | text | check-ins; E.164 (`^\+[1-9][0-9]{7,14}$`) |
+| `department`, `member_id` | text | earlier registrations only (nullable) |
+| `verification_id` | uuid `UNIQUE` | the server-issued location verification used (one check-in each) |
 | `latitude`, `longitude` | double precision | range `CHECK`s (±90 / ±180) |
 | `accuracy_m` | double precision | ≥ 0 |
 | `position_captured_at` | timestamptz | when the GPS fix was taken |
@@ -206,10 +249,16 @@ Schema (`database/schema.sql`):
 | `client_distance_m` | double precision | what the browser claimed (audit only) |
 | `user_agent` | text | device info |
 | `ip_hash` | text | salted SHA-256. The raw IP is never stored |
-| `created_at` | timestamptz | submission time |
+| `created_at` | timestamptz | check-in time |
 
-Constraint `status_matches_distance` enforces `(status = WITHIN_RANGE) ⇔ (distance_m ≤ radius_m)`.
-Indexes: `created_at DESC`, `(geofence_status, created_at DESC)`, `department`, `member_id`.
+Constraints:
+- `status_matches_distance` enforces `(status = WITHIN_RANGE) ⇔ (distance_m ≤ radius_m)`.
+- `record_kind_complete` requires each row to be either an earlier registration (department + ID), or a complete
+  check-in (all five employee fields plus a verification ID) that is `WITHIN_RANGE`.
+
+Indexes: `created_at DESC`, `(geofence_status, created_at DESC)`, `institution`, `email`, `department`, `member_id`.
+The migration is additive and idempotent. Existing rows are untouched, and `npm run db:migrate` upgrades an existing
+database in place.
 
 ### 4. Create the admin account
 ```bash
@@ -246,8 +295,19 @@ The test suite covers:
 - **Case 3:** ~100 m (boundary, four bearings) and 99.9 m → `WITHIN_RANGE`
 - **Case 4:** 100.02 m, 101 m, 287.4 m → `OUTSIDE_RANGE`
 - **Case 5:** invalid latitude/longitude (out of range, NaN, ∞, strings, missing) → validation error
-- Server rejects forged status/distance, invalid fields and stale/future GPS fixes, and normalizes text
-- Password hashing, session-token tampering/expiry, rate limiter
+- Attendance flow:
+  - Inside 100 m → verification issued (form available). Outside → none issued (form blocked).
+  - The old target point is ~205 m from the new workplace → outside.
+  - Poor accuracy, stale fixes and invalid coordinates are rejected.
+- Check-in:
+  - Stored with the server-computed distance.
+  - Refused without a verification, or with a tampered, foreign or expired one.
+  - Forged status, distance or coordinates are ignored.
+  - Re-checked against a moved geofence.
+  - A verification can be used only once.
+  - Invalid name, designation, institution, email or mobile is rejected.
+- Mobile number normalization (Indian and international), QR SVG path
+- Password hashing, session-token tampering/expiry, rate limiter, DB connection options
 
 ---
 
@@ -331,12 +391,14 @@ descriptive message as usual.
 
 - **Explicit consent.** Location is requested only from a user click, through the browser's permission prompt.
   It is read once (`getCurrentPosition`, never `watchPosition`), and the page explains why it is collected.
-- **Server is authoritative.** Distance and status are computed on the server from validated coordinates.
-  Client values that could influence the result are not part of the accepted schema. A DB constraint
-  backs this up.
-- **Validation.** Zod schema: length limits, allowed character sets, lat ∈ [-90, 90], lon ∈ [-180, 180],
-  finite numbers, accuracy bounds, GPS-fix age ≤ 10 min. Bodies are capped at 4 KB and must be JSON.
-  All SQL is parameterised.
+- **The server is authoritative; the QR code is not a security control.** Distance and status are computed on the
+  server, both when the location is verified and again at check-in. The check-in request can't carry coordinates,
+  distance or status. Coordinates come only from an HMAC-signed, 10-minute, single-use verification, whose signing
+  key is separate from the admin-session key. Knowing the attendance URL is not enough: without an in-range
+  verification, no form is shown and the API refuses the check-in. DB constraints back this up.
+- **Validation.** Zod schemas: length limits, allowed character sets, email format, mobile numbers (E.164),
+  lat ∈ [-90, 90], lon ∈ [-180, 180], finite numbers, accuracy ≤ ±150 m, GPS-fix age ≤ 2 min.
+  Bodies are capped at 4–8 KB and must be JSON. All SQL is parameterised.
 - **Admin protection.**
   - `proxy.ts` redirects unauthenticated requests, and every admin page, action and route re-checks the session (defense in depth).
   - Passwords are hashed with scrypt, and credentials are compared in constant time.
@@ -344,7 +406,7 @@ descriptive message as usual.
   - Login is rate limited (5 attempts / 15 min per IP), and the dashboard is `noindex`.
 - **Database connections to remote hosts use TLS with full certificate and hostname verification.**
 - **Secrets** live only in environment variables. `.env*` is git-ignored except `.env.example`, which holds
-  no secrets. The geofence config is read server-side and passed to the page as props.
+  no secrets. The workplace coordinates stay on the server. The attendance page receives only the radius.
 - **Headers:** `Permissions-Policy: geolocation=(self)`, `X-Frame-Options: DENY`, `nosniff`, HSTS,
   a strict referrer policy, and no `X-Powered-By`.
 - **Data minimisation.** Only the listed fields are stored. IP addresses are stored as a salted hash
@@ -359,11 +421,14 @@ descriptive message as usual.
   developer tools, a mock-location app or a rooted phone can report fake coordinates. The server check stops
   *tampering with the result*, but no web app can prove where a device physically is. For high-stakes use,
   combine this with on-site measures (a QR code that rotates per session, venue Wi-Fi/IP allow-listing, or supervision).
+  The static QR code is deliberately not treated as proof of presence, since a photo of it works anywhere.
 - **GPS accuracy varies.** Indoors or on desktop (Wi-Fi/IP positioning), accuracy can be tens to hundreds of meters.
-  Such fixes are flagged *low accuracy* but still classified by distance.
-- **Rate limiting is in-memory**, so it applies per server instance. For strict global limits use a shared
-  store such as Upstash Redis.
-- **Duplicate submissions are allowed.** The same ID can submit more than once (for example, on several days). Filter by ID
-  in the dashboard, or add a unique constraint per day if you need one record per person per day.
+  Fixes worse than ±150 m are rejected (with advice to enable precise location or move near a window), and fixes worse
+  than ±50 m are accepted but flagged *low accuracy*. On iPhone, *Precise Location* must be on for Safari.
+- **Rate limiting is in-memory**, so it applies per server instance. The limits are deliberately generous, because an office's
+  staff often share one public IP. For strict global limits use a shared store such as Upstash Redis.
+- **Repeat check-ins are allowed.** The same person can check in more than once (for example, on several days, or
+  twice by mistake). Each check-in needs its own fresh in-range verification. Search by email or mobile in the
+  dashboard, or add a unique constraint per person per day if you need exactly one record.
 - **Single admin account.** Multiple admins or roles would need a users table or an auth provider.
 - **The map uses public OpenStreetMap tiles.** Fine for low admin traffic. Use a tile provider for heavy usage.

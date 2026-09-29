@@ -1,10 +1,19 @@
 import type { GeofenceStatus } from "@/lib/geo";
 
+/**
+ * One attendance record (table `submissions`).
+ * Check-ins fill name/designation/institution/email/mobile. Records created by the
+ * earlier registration form have department/memberId instead (legacy, kept as-is).
+ */
 export interface Submission {
   id: string;
   name: string;
-  department: string;
-  memberId: string;
+  designation: string | null;
+  institution: string | null;
+  email: string | null;
+  mobile: string | null;
+  department: string | null;
+  memberId: string | null;
   latitude: number;
   longitude: number;
   accuracyM: number;
@@ -16,18 +25,18 @@ export interface Submission {
   targetLongitude: number;
   radiusM: number;
   clientDistanceM: number | null;
+  verificationId: string | null;
   userAgent: string | null;
   createdAt: Date;
 }
 
-export type NewSubmission = Omit<Submission, "id" | "createdAt" | "userAgent"> & {
-  userAgent: string | null;
+export type NewSubmission = Omit<Submission, "id" | "createdAt" | "department" | "memberId"> & {
   ipHash: string | null;
 };
 
 export interface SubmissionFilters {
   q?: string;
-  department?: string;
+  institution?: string;
   status?: GeofenceStatus;
   sort?: "newest" | "oldest";
   page?: number;
@@ -41,17 +50,31 @@ export interface SubmissionStats {
   today: number;
 }
 
-/** Response of POST /api/submissions */
-export type SubmitResponse =
+/** Response of POST /api/attendance/verify */
+export type VerifyResponse =
   | {
       ok: true;
-      submission: {
-        id: string;
-        distanceMeters: number;
-        status: GeofenceStatus;
-        lowAccuracy: boolean;
-        radiusMeters: number;
-        createdAt: string;
-      };
+      status: GeofenceStatus;
+      distanceMeters: number;
+      radiusMeters: number;
+      accuracyMeters: number;
+      lowAccuracy: boolean;
+      /** Present only when status is WITHIN_RANGE. Required to check in. */
+      verificationToken?: string;
+      expiresAt?: string;
     }
-  | { ok: false; error: string; fieldErrors?: Record<string, string> };
+  | { ok: false; error: string; code?: "POOR_ACCURACY" | "STALE_FIX" | "INVALID"; fieldErrors?: Record<string, string> };
+
+/** Response of POST /api/attendance/check-in */
+export type CheckInResponse =
+  | {
+      ok: true;
+      checkIn: { id: string; name: string; distanceMeters: number; radiusMeters: number; createdAt: string };
+    }
+  | {
+      ok: false;
+      error: string;
+      code?: "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | "INVALID";
+      fieldErrors?: Record<string, string>;
+      distanceMeters?: number;
+    };

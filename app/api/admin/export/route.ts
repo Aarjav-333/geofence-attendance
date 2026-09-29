@@ -5,10 +5,12 @@ import { exportSubmissions } from "@/lib/db";
 
 const COLUMNS = [
   ["id", "Reference"],
-  ["createdAt", "Submitted At (UTC)"],
-  ["name", "Name"],
-  ["department", "Department"],
-  ["memberId", "ID"],
+  ["createdAt", "Check-In Time (UTC)"],
+  ["name", "Employee Name"],
+  ["designation", "Designation"],
+  ["institution", "Institution"],
+  ["email", "Email"],
+  ["mobile", "Mobile Number"],
   ["distanceM", "Distance (m)"],
   ["geofenceStatus", "Status"],
   ["latitude", "Latitude"],
@@ -20,6 +22,9 @@ const COLUMNS = [
   ["targetLatitude", "Target Latitude"],
   ["targetLongitude", "Target Longitude"],
   ["clientDistanceM", "Client-Reported Distance (m)"],
+  ["verificationId", "Location Verification ID"],
+  ["department", "Department (earlier registrations)"],
+  ["memberId", "ID (earlier registrations)"],
 ] as const;
 
 function csvCell(value: unknown): string {

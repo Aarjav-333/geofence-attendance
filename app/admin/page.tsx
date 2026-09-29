@@ -5,8 +5,8 @@ import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
 import { SubmissionsTable } from "@/components/admin/submissions-table";
 import { filtersToSearch, parseFilters } from "@/lib/admin-filters";
 import { requireAdmin } from "@/lib/auth";
-import { getDepartmentSuggestions, getGeofenceConfig } from "@/lib/config";
-import { getStats, listDepartments, listSubmissions } from "@/lib/db";
+import { getGeofenceConfig } from "@/lib/config";
+import { getStats, listInstitutions, listSubmissions } from "@/lib/db";
 import { logout } from "./actions";
 
 export const metadata: Metadata = { title: "Admin dashboard", robots: { index: false, follow: false } };
@@ -16,21 +16,23 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   const filters = parseFilters(await searchParams);
   const geofence = getGeofenceConfig();
 
-  const [stats, departmentsInDb, result] = await Promise.all([getStats(), listDepartments(), listSubmissions(filters)]);
-  const departments = [...new Set([...getDepartmentSuggestions(), ...departmentsInDb])].sort();
+  const [stats, institutions, result] = await Promise.all([getStats(), listInstitutions(), listSubmissions(filters)]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:py-10">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Submissions</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Attendance</h1>
           <p className="text-sm text-muted">
-            Geofence: {geofence.target.latitude.toFixed(6)}, {geofence.target.longitude.toFixed(6)} · radius{" "}
+            Workplace: {geofence.target.latitude.toFixed(6)}, {geofence.target.longitude.toFixed(6)} · radius{" "}
             {geofence.radiusMeters} m
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/admin/qr" className="btn-secondary py-2 text-sm">
+            Attendance QR code
+          </Link>
           <a href={`/api/admin/export${filtersToSearch(filters, { page: 1 })}`} className="btn-secondary py-2 text-sm">
             Export CSV
           </a>
@@ -43,7 +45,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       </header>
 
       <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Summary">
-        <Stat label="Total submissions" value={stats.total} />
+        <Stat label="Total check-ins" value={stats.total} />
         <Stat label={`Within ${geofence.radiusMeters} m`} value={stats.within} tone="ok" />
         <Stat label={`Outside ${geofence.radiusMeters} m`} value={stats.outside} tone="bad" />
         <Stat label="Today" value={stats.today} />
@@ -63,7 +65,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
         }))}
       />
 
-      <AdminFilters departments={departments} />
+      <AdminFilters institutions={institutions} />
 
       <p className="mb-2 text-sm text-muted">
         {result.total === 0

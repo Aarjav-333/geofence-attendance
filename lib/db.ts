@@ -27,19 +27,27 @@ export function db(): postgres.Sql {
 
 const MAX_PAGE_SIZE = 200;
 
+const COLUMNS = (sql: postgres.Sql) => sql`
+  id, name, designation, institution, email, mobile, department, member_id,
+  latitude, longitude, accuracy_m, position_captured_at, distance_m, geofence_status, low_accuracy,
+  target_latitude, target_longitude, radius_m, client_distance_m, verification_id, user_agent, created_at`;
+
 export async function insertSubmission(s: NewSubmission): Promise<Submission> {
-  const [row] = await db()<Submission[]>`
+  const sql = db();
+  const [row] = await sql<Submission[]>`
     INSERT INTO submissions (
-      name, department, member_id, latitude, longitude, accuracy_m, position_captured_at,
+      name, designation, institution, email, mobile,
+      latitude, longitude, accuracy_m, position_captured_at,
       distance_m, geofence_status, low_accuracy, target_latitude, target_longitude, radius_m,
-      client_distance_m, user_agent, ip_hash
+      client_distance_m, verification_id, user_agent, ip_hash
     ) VALUES (
-      ${s.name}, ${s.department}, ${s.memberId}, ${s.latitude}, ${s.longitude}, ${s.accuracyM},
-      ${s.positionCapturedAt}, ${s.distanceM}, ${s.geofenceStatus}, ${s.lowAccuracy},
-      ${s.targetLatitude}, ${s.targetLongitude}, ${s.radiusM}, ${s.clientDistanceM},
-      ${s.userAgent}, ${s.ipHash}
+      ${s.name}, ${s.designation}, ${s.institution}, ${s.email}, ${s.mobile},
+      ${s.latitude}, ${s.longitude}, ${s.accuracyM}, ${s.positionCapturedAt},
+      ${s.distanceM}, ${s.geofenceStatus}, ${s.lowAccuracy},
+      ${s.targetLatitude}, ${s.targetLongitude}, ${s.radiusM},
+      ${s.clientDistanceM}, ${s.verificationId}, ${s.userAgent}, ${s.ipHash}
     )
-    RETURNING *`;
+    RETURNING ${COLUMNS(sql)}`;
   return row;
 }
 
@@ -47,9 +55,13 @@ function whereClause(sql: postgres.Sql, f: SubmissionFilters) {
   const conditions = [];
   if (f.q) {
     const like = `%${f.q.replace(/[\\%_]/g, (m) => "\\" + m)}%`;
-    conditions.push(sql`(name ILIKE ${like} OR member_id ILIKE ${like} OR department ILIKE ${like})`);
+    conditions.push(sql`(
+      name ILIKE ${like} OR designation ILIKE ${like} OR institution ILIKE ${like}
+      OR email ILIKE ${like} OR mobile ILIKE ${like}
+      OR member_id ILIKE ${like} OR department ILIKE ${like}
+    )`);
   }
-  if (f.department) conditions.push(sql`department = ${f.department}`);
+  if (f.institution) conditions.push(sql`institution = ${f.institution}`);
   if (f.status) conditions.push(sql`geofence_status = ${f.status}`);
   if (conditions.length === 0) return sql``;
   return sql`WHERE ${conditions.reduce((acc, c) => sql`${acc} AND ${c}`)}`;
@@ -66,9 +78,7 @@ export async function listSubmissions(
 
   const [rows, [{ count }]] = await Promise.all([
     sql<Submission[]>`
-      SELECT id, name, department, member_id, latitude, longitude, accuracy_m, position_captured_at,
-             distance_m, geofence_status, low_accuracy, target_latitude, target_longitude, radius_m,
-             client_distance_m, user_agent, created_at
+      SELECT ${COLUMNS(sql)}
       FROM submissions ${where}
       ORDER BY ${order}
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
@@ -82,9 +92,7 @@ export async function exportSubmissions(f: SubmissionFilters, limit = 50_000): P
   const sql = db();
   const order = f.sort === "oldest" ? sql`created_at ASC` : sql`created_at DESC`;
   return sql<Submission[]>`
-    SELECT id, name, department, member_id, latitude, longitude, accuracy_m, position_captured_at,
-           distance_m, geofence_status, low_accuracy, target_latitude, target_longitude, radius_m,
-           client_distance_m, user_agent, created_at
+    SELECT ${COLUMNS(sql)}
     FROM submissions ${whereClause(sql, f)}
     ORDER BY ${order}
     LIMIT ${limit}`;
@@ -100,8 +108,8 @@ export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionSta
   return row;
 }
 
-export async function listDepartments(): Promise<string[]> {
-  const rows = await db()<{ department: string }[]>`
-    SELECT DISTINCT department FROM submissions ORDER BY department`;
-  return rows.map((r) => r.department);
+export async function listInstitutions(): Promise<string[]> {
+  const rows = await db()<{ institution: string }[]>`
+    SELECT DISTINCT institution FROM submissions WHERE institution IS NOT NULL ORDER BY institution`;
+  return rows.map((r) => r.institution);
 }

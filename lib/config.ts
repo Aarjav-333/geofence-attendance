@@ -35,11 +35,29 @@ export function getLowAccuracyThreshold(): number {
   return number("LOW_ACCURACY_THRESHOLD_METERS", 50);
 }
 
-export function getDepartmentSuggestions(): string[] {
-  return (process.env.DEPARTMENTS ?? "")
-    .split(",")
-    .map((d) => d.trim())
-    .filter(Boolean);
+/**
+ * GPS fixes whose reported accuracy radius is larger than this are rejected as
+ * insufficient: with ±300 m of uncertainty a 100 m geofence can't be judged.
+ */
+export function getMaxAccuracy(): number {
+  const max = number("MAX_ACCURACY_METERS", 150);
+  if (max <= 0) throw new Error("MAX_ACCURACY_METERS must be positive");
+  return max;
+}
+
+/**
+ * Public base URL of the app (used for the workplace QR code).
+ * APP_URL wins; on Vercel the stable production domain is used; otherwise the
+ * current request's host.
+ */
+export function getAppUrl(requestHeaders?: Headers): string {
+  const explicit = process.env.APP_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const vercelProd = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (vercelProd) return `https://${vercelProd}`;
+  const host = requestHeaders?.get("x-forwarded-host") ?? requestHeaders?.get("host") ?? "localhost:3000";
+  const proto = requestHeaders?.get("x-forwarded-proto") ?? (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https");
+  return `${proto}://${host}`;
 }
 
 /** IANA timezone used for "Today" and displayed timestamps in the admin dashboard. */
