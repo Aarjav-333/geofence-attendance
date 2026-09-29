@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ClearAllData } from "@/components/admin/clear-all-data";
 import { AdminFilters } from "@/components/admin/filters";
 import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
 import { SubmissionsTable } from "@/components/admin/submissions-table";
@@ -36,6 +37,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
           <a href={`/api/admin/export${filtersToSearch(filters, { page: 1 })}`} className="btn-secondary py-2 text-sm">
             Export CSV
           </a>
+          <ClearAllData total={stats.total} />
           <form action={logout}>
             <button type="submit" className="btn-secondary py-2 text-sm" title={`Signed in as ${session.sub}`}>
               Sign out

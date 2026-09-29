@@ -1,6 +1,9 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
+import { getAdminSession } from "@/lib/auth";
+import { deleteAllSubmissions } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { authenticate } from "@/lib/admin-accounts";
 import { getAdminAccounts, getSessionSecret } from "@/lib/config";
@@ -43,6 +46,27 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
     maxAge: SESSION_TTL_S,
   });
   redirect("/admin");
+}
+
+export type ClearAllResult = { ok: true; deleted: number } | { ok: false; error: string };
+
+/**
+ * Delete ALL attendance records. Server actions are reachable by direct POST, so
+ * the admin check here is the real guard — hiding the button is not.
+ */
+export async function clearAllAttendance(): Promise<ClearAllResult> {
+  const session = await getAdminSession();
+  if (!session) return { ok: false, error: "You are not authorized to clear attendance data. Please sign in again." };
+
+  try {
+    const deleted = await deleteAllSubmissions();
+    console.info(`[admin] ${session.sub} cleared all attendance data (${deleted} record(s))`);
+    revalidatePath("/admin");
+    return { ok: true, deleted };
+  } catch (err) {
+    console.error("[admin] clear all attendance data failed", err);
+    return { ok: false, error: "Could not clear the attendance data. Nothing was deleted — please try again." };
+  }
 }
 
 export async function logout() {

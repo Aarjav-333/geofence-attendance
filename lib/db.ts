@@ -108,6 +108,15 @@ export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionSta
   return row;
 }
 
+/**
+ * Permanently delete every attendance record (the `submissions` table only).
+ * Schema, admin accounts (environment config) and all settings are untouched.
+ */
+export async function deleteAllSubmissions(): Promise<number> {
+  const result = await db()`DELETE FROM submissions`;
+  return result.count;
+}
+
 export async function listInstitutions(): Promise<string[]> {
   const rows = await db()<{ institution: string }[]>`
     SELECT DISTINCT institution FROM submissions WHERE institution IS NOT NULL ORDER BY institution`;
