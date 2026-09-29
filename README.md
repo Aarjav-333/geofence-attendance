@@ -88,7 +88,7 @@ PostgreSQL  submissions table (CHECK constraints + indexes)
 |---|---|
 | **Next.js 16 (App Router) + TypeScript** | One deployable unit for the UI, API and admin pages. Server Components query the DB directly for the dashboard, so no extra API layer is needed. |
 | **PostgreSQL** (`postgres` driver, plain SQL) | Real constraints, enum types and indexes. Plain parameterised SQL keeps it small, with no ORM or codegen. Runs locally in Docker and in production on Neon, Supabase, RDS or any other Postgres host. |
-| **Env-based single-admin auth** (scrypt + HMAC-signed cookie) | The requirement is one authorized administrator. This avoids a third-party auth provider and a users table while staying secure. |
+| **Env-based admin accounts** (scrypt + HMAC-signed cookie) | A few administrators, all with the same `admin` role. This avoids a third-party auth provider and a users table while staying secure. |
 | **Tailwind CSS v4** | Fast, consistent, responsive styling with light and dark themes. |
 | **Zod** | One schema shared by the browser and the server. |
 | **Vitest** | Fast unit tests for the geofence, validation and auth logic. |
@@ -208,6 +208,7 @@ cp .env.example .env.local
 | `DATABASE_SSL` | – (auto) | `disable` \| `require` \| `verify-full`. By default local hosts use no TLS and remote hosts use `verify-full` |
 | `ADMIN_USERNAME` | ✔ | Admin login name |
 | `ADMIN_PASSWORD_HASH` | ✔ | scrypt hash (see below). Never store the plain password |
+| `ADDITIONAL_ADMINS` | – | More admins with identical privileges: `username=<scrypt hash>`, separated by `;` (e.g. the `master` account) |
 | `SESSION_SECRET` | ✔ | ≥32 random characters. Signs admin sessions and location verifications (with separate derived keys) |
 
 Workplace configuration used for this deployment: the **Principal's office, College of Engineering Trivandrum**.
@@ -272,6 +273,23 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ```
 Set `ADMIN_USERNAME` too. Changing the password means generating a new hash. Rotating `SESSION_SECRET`
 signs out every session.
+
+**Additional administrators** (for example the `master` account) are listed in `ADDITIONAL_ADMINS`:
+
+```bash
+npm run hash-password -- "<a long random password>"
+# → set ADDITIONAL_ADMINS=master=scrypt:16384:8:1:...   (several: user1=<hash>;user2=<hash>)
+```
+
+- Every account gets the same `admin` role, so each has exactly the same access: the dashboard, records, search,
+  filters, the map, CSV export and the QR code page. They all sign in on the same `/admin/login` page.
+- Sessions record the username and role. On every request, the server checks the role and checks that the
+  username is still a configured admin. Removing an account from the environment therefore revokes its sessions
+  at once.
+- In production, store `ADDITIONAL_ADMINS` as a Vercel **Sensitive** variable. Store only hashes, never passwords,
+  and never commit them.
+- To change an account's password, generate a new hash and update the variable. There is no self-service
+  "change password" screen, because accounts live in configuration rather than a database.
 
 ### 5. Run
 ```bash
@@ -403,7 +421,9 @@ descriptive message as usual.
   Bodies are capped at 4–8 KB and must be JSON. All SQL is parameterised.
 - **Admin protection.**
   - `proxy.ts` redirects unauthenticated requests, and every admin page, action and route re-checks the session (defense in depth).
-  - Passwords are hashed with scrypt, and credentials are compared in constant time.
+  - Passwords are hashed with scrypt, and credentials are compared in constant time. Every admin account (primary
+    and `ADDITIONAL_ADMINS`) has the `admin` role. That role and the account's continued existence are
+    verified server-side on every admin page, action and API route.
   - Sessions are HMAC-SHA256-signed with an 8 h expiry, in an `HttpOnly` + `SameSite=Strict` cookie that is `Secure` in production.
   - Login is rate limited (5 attempts / 15 min per IP), and the dashboard is `noindex`.
 - **Database connections to remote hosts use TLS with full certificate and hostname verification.**
@@ -432,5 +452,7 @@ descriptive message as usual.
 - **Repeat check-ins are allowed.** The same person can check in more than once (for example, on several days, or
   twice by mistake). Each check-in needs its own fresh in-range verification. Search by email or mobile in the
   dashboard, or add a unique constraint per person per day if you need exactly one record.
-- **Single admin account.** Multiple admins or roles would need a users table or an auth provider.
+- **Admin accounts are configuration, not data.** Adding, removing or re-keying an admin means editing
+  `ADMIN_*` / `ADDITIONAL_ADMINS` and redeploying. There is one role (`admin`). Finer-grained roles or
+  self-service password changes would need a users table or an auth provider.
 - **The map uses public OpenStreetMap tiles.** Fine for low admin traffic. Use a tile provider for heavy usage.

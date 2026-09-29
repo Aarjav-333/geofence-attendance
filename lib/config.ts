@@ -1,4 +1,5 @@
 import "server-only";
+import { parseAdminAccounts, type AdminAccount } from "./admin-accounts";
 import { assertValidCoordinates, type GeofenceConfig } from "./geo";
 
 /**
@@ -69,8 +70,9 @@ export function getDatabaseUrl(): string {
   return required("DATABASE_URL");
 }
 
-export function getAdminCredentials(): { username: string; passwordHash: string } {
-  return { username: required("ADMIN_USERNAME"), passwordHash: required("ADMIN_PASSWORD_HASH") };
+/** All administrator accounts (primary + ADDITIONAL_ADMINS), each with the "admin" role. */
+export function getAdminAccounts(): AdminAccount[] {
+  return parseAdminAccounts(process.env);
 }
 
 export function getSessionSecret(): string {
