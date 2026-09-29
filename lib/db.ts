@@ -136,6 +136,9 @@ export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionSta
  */
 export async function clearAllSubmissions(actor: string): Promise<number> {
   return db().begin(async (sql) => {
+    // Fail after 10 s instead of hanging if another session holds row locks (e.g. a stuck
+    // transaction). Plain check-in INSERTs never lock existing rows, so they don't trigger this.
+    await sql`SET LOCAL lock_timeout = '10s'`;
     const { count } = await sql`DELETE FROM submissions`;
     await sql`
       INSERT INTO admin_audit_log (actor, action, details)

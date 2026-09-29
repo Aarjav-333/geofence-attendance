@@ -41,7 +41,7 @@ export function ClearAllData({ total }: { total: number }) {
           !r.ok && r.code === "UNAUTHENTICATED"
             ? "login" // session expired: nothing was deleted, sign in again
             : r.ok
-              ? { tone: "ok", text: `All attendance data has been cleared successfully (${r.deleted} record${r.deleted === 1 ? "" : "s"} deleted).` }
+              ? { tone: "ok", text: `Attendance data cleared successfully: ${r.deleted} record${r.deleted === 1 ? "" : "s"} deleted.` }
               : { tone: "bad", text: r.error };
       } catch {
         // No response (network failure or server crash): the request may or may not have

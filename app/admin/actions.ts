@@ -81,6 +81,24 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
     deleted = await clearAllSubmissions(session.sub); // also writes the audit log entry
   } catch (err) {
     console.error("[admin] clear all attendance data failed", err);
+    const pg = err as { code?: string };
+    // The whole clear is one transaction, so these specific failures mean nothing was deleted.
+    if (pg.code === "42P01") {
+      // undefined_table: the admin_audit_log migration hasn't been applied to this database
+      return {
+        ok: false,
+        code: "DB_ERROR",
+        error: "The database schema is out of date, so nothing was cleared. Run `npm run db:migrate` against this database, then try again.",
+      };
+    }
+    if (pg.code === "55P03") {
+      // lock_not_available: another session held row locks for more than 10 s
+      return {
+        ok: false,
+        code: "DB_ERROR",
+        error: "The attendance table is busy (locked by another database session), so nothing was cleared. Try again in a moment.",
+      };
+    }
     return {
       ok: false,
       code: "DB_ERROR",

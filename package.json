@@ -12,7 +12,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "typecheck": "tsc --noEmit",
-    "test:db": "vitest run tests/db.integration.test.ts"
+    "test:db": "vitest run --config vitest.db.config.mts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

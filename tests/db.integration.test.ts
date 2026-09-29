@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { parseEnv } from "node:util";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { isLocalDatabase } from "@/lib/db-options";
 import type { NewSubmission } from "@/types/submission";
 
 // Next.js deliberately ignores .env.local when NODE_ENV=test, so read this one value directly.
@@ -23,13 +24,23 @@ const TEST_URL =
   process.env.TEST_DATABASE_URL ||
   (existsSync(envLocal) ? (parseEnv(readFileSync(envLocal, "utf8")) as Record<string, string>).TEST_DATABASE_URL : undefined);
 
+/** Database name as PostgreSQL sees it (URL paths are percent-encoded). */
+const databaseName = (url: string) => decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+
+/** Only a local host (same rule the app uses for "local") and a *_test database name. */
 function assertDisposable(url: string) {
-  const u = new URL(url);
-  const dbName = u.pathname.replace(/^\//, "");
-  if (!["localhost", "127.0.0.1", "::1", "[::1]", "db"].includes(u.hostname) || !dbName.endsWith("_test")) {
-    throw new Error(`Refusing to run destructive DB tests against ${u.hostname}/${dbName} (need a local *_test database)`);
+  const dbName = databaseName(url);
+  if (!isLocalDatabase(url) || !dbName.endsWith("_test")) {
+    throw new Error(`Refusing to run destructive DB tests against ${new URL(url).hostname}/${dbName} (need a local *_test database)`);
   }
   return dbName;
+}
+
+/** Same server and credentials, but the "postgres" maintenance database. */
+function maintenanceUrl(url: string) {
+  const u = new URL(url);
+  u.pathname = "/postgres";
+  return u.toString();
 }
 
 describe.skipIf(!TEST_URL)("database (integration)", () => {
@@ -41,9 +52,9 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     const dbName = assertDisposable(url);
 
     // Create the test database if needed (connect to the server's maintenance DB)
-    const server = postgres(url.replace(/\/[^/?]+(\?|$)/, "/postgres$1"), { max: 1, onnotice: () => {} });
+    const server = postgres(maintenanceUrl(url), { max: 1, onnotice: () => {} });
     const [{ exists }] = await server`SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = ${dbName}) AS exists`;
-    if (!exists) await server.unsafe(`CREATE DATABASE "${dbName}"`);
+    if (!exists) await server`CREATE DATABASE ${server(dbName)}`; // identifier safely quoted
     await server.end();
 
     // Fresh schema from the real migration file
@@ -150,13 +161,14 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     await admin.begin(async (tx) => {
       const [{ c }] = await tx`SELECT count(*)::int AS c FROM submissions`;
       expect(c).toBe(2);
-      const started = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const deleted = await Promise.race([
         dbmod.clearAllSubmissions("master"),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("clear blocked by a reader")), 3000)),
-      ]);
-      expect(deleted).toBe(2);
-      expect(Date.now() - started).toBeLessThan(3000);
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("clear blocked by a reader")), 3000);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      expect(deleted).toBe(2); // resolved before the 3 s deadline → it did not wait on the reader
       // …and a check-in right after still goes through while the reader is open
       await dbmod.insertSubmission(checkIn());
     });

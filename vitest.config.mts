@@ -12,5 +12,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // Database integration tests are destructive and need PostgreSQL: they run only via
+    // `npm run test:db` (vitest.db.config.mts), never as part of `npm test`.
+    exclude: ["**/node_modules/**", "tests/**/*.integration.test.ts"],
   },
 });

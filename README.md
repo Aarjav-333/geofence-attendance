@@ -349,7 +349,8 @@ host with a database name ending in `_test`. The tests cover:
 - Clear All Data's exact count, audit entry and all-or-nothing behaviour
 - a regression test that Clear All Data never waits on concurrent readers (which is what `TRUNCATE` would do)
 
-Without `TEST_DATABASE_URL`, these tests are skipped.
+They use their own config (`vitest.db.config.mts`). `npm test` never runs them and needs no database. Without
+`TEST_DATABASE_URL`, `npm run test:db` skips them.
 
 ---
 

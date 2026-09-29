@@ -43,7 +43,8 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
           {lastClear && (
             <p className="text-xs text-muted">
               Last cleared by {lastClear.actor} on {formatDateTime(lastClear.at)}
-              {typeof lastClear.details?.deleted === "number" && ` (${lastClear.details.deleted} records)`}
+              {typeof lastClear.details?.deleted === "number" &&
+                ` (${lastClear.details.deleted} record${lastClear.details.deleted === 1 ? "" : "s"})`}
             </p>
           )}
         </div>
