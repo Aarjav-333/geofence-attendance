@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { destinationPoint, evaluateGeofence, haversineDistance, type GeofenceConfig } from "@/lib/geo";
 
-const TARGET = { latitude: 8.546013910592666, longitude: 76.90652146747094 };
+const TARGET = { latitude: 8.5458387, longitude: 76.9062601 }; // Principal, CET (OSM node 3695678553)
 const CONFIG: GeofenceConfig = { target: TARGET, radiusMeters: 100 };
 
 describe("haversineDistance", () => {

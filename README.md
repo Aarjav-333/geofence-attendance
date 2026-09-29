@@ -210,11 +210,13 @@ cp .env.example .env.local
 | `ADMIN_PASSWORD_HASH` | ✔ | scrypt hash (see below). Never store the plain password |
 | `SESSION_SECRET` | ✔ | ≥32 random characters. Signs admin sessions and location verifications (with separate derived keys) |
 
-Workplace configuration used for this deployment:
+Workplace configuration used for this deployment: the **Principal's office, College of Engineering Trivandrum**.
+It is OpenStreetMap node [3695678553](https://www.openstreetmap.org/node/3695678553) (`name=Principal`,
+`office=educational_institution`); the coordinates were confirmed with Nominatim and the OSM API:
 
 ```env
-TARGET_LATITUDE=8.546013910592666
-TARGET_LONGITUDE=76.90652146747094
+TARGET_LATITUDE=8.5458387
+TARGET_LONGITUDE=76.9062601
 GEOFENCE_RADIUS_METERS=100
 ```
 
@@ -297,7 +299,7 @@ The test suite covers:
 - **Case 5:** invalid latitude/longitude (out of range, NaN, ∞, strings, missing) → validation error
 - Attendance flow:
   - Inside 100 m → verification issued (form available). Outside → none issued (form blocked).
-  - The old target point is ~205 m from the new workplace → outside.
+  - Distances are measured from the Principal's office: the first target (~180 m away) is outside, the previous one (34.72 m) inside.
   - Poor accuracy, stale fixes and invalid coordinates are rejected.
 - Check-in:
   - Stored with the server-computed distance.

@@ -5,7 +5,7 @@ import { signToken } from "@/lib/signed-token";
 import type { NewSubmission, Submission } from "@/types/submission";
 
 // Workplace geofence
-const TARGET = { latitude: 8.546013910592666, longitude: 76.90652146747094 };
+const TARGET = { latitude: 8.5458387, longitude: 76.9062601 }; // Principal, CET (OSM node 3695678553)
 const GEOFENCE: GeofenceConfig = { target: TARGET, radiusMeters: 100 };
 const SECRET = "unit-test-secret-that-is-longer-than-32-characters";
 const NOW = Date.UTC(2026, 8, 29, 4, 30);
@@ -77,11 +77,15 @@ describe("verifyLocation — server-side geofence check before the form is shown
     });
   });
 
-  it("uses the configured workplace coordinates (the previous target is ~205 m away → outside)", async () => {
-    const oldTarget = { latitude: 8.54612616725849, longitude: 76.90465781805145, accuracy: 5, positionTimestamp: NOW };
-    const r = await verifyLocation(oldTarget, deps().d);
-    expect(r.ok && r.result.status).toBe("OUTSIDE_RANGE");
-    expect(r.ok && r.result.distanceMeters).toBeGreaterThan(200);
+  it("measures from the Principal's office (OSM node 3695678553), not from earlier targets", async () => {
+    const at = (latitude: number, longitude: number) => ({ latitude, longitude, accuracy: 5, positionTimestamp: NOW });
+    // First target (Sept 28): ~180 m away → outside
+    const first = await verifyLocation(at(8.54612616725849, 76.90465781805145), deps().d);
+    expect(first.ok && first.result.status).toBe("OUTSIDE_RANGE");
+    expect(first.ok && first.result.distanceMeters).toBeGreaterThan(150);
+    // Previous target (Sept 29): 34.72 m from the Principal's office → inside
+    const previous = await verifyLocation(at(8.546013910592666, 76.90652146747094), deps().d);
+    expect(previous.ok && previous.result).toEqual({ distanceMeters: 34.72, status: "WITHIN_RANGE" });
   });
 
   it.each([
