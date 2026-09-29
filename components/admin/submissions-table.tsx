@@ -1,15 +1,6 @@
-import { getDisplayTimezone } from "@/lib/config";
+import { formatDateTime } from "@/lib/datetime";
 import { formatDistance } from "@/lib/geo";
 import type { Submission } from "@/types/submission";
-
-const dateFmt = new Intl.DateTimeFormat("en-IN", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: getDisplayTimezone(),
-});
 
 export function StatusBadge({ status }: { status: Submission["geofenceStatus"] }) {
   const within = status === "WITHIN_RANGE";
@@ -71,7 +62,7 @@ function Details({ r }: { r: Submission }) {
         <dt className="text-muted">Accuracy</dt>
         <dd>±{r.accuracyM.toFixed(1)} m</dd>
         <dt className="text-muted">GPS fix at</dt>
-        <dd>{r.positionCapturedAt ? dateFmt.format(new Date(r.positionCapturedAt)) : "—"}</dd>
+        <dd>{r.positionCapturedAt ? formatDateTime(r.positionCapturedAt) : "—"}</dd>
         <dt className="text-muted">Target used</dt>
         <dd>
           {r.targetLatitude.toFixed(6)}, {r.targetLongitude.toFixed(6)} · {r.radiusM} m
@@ -147,7 +138,7 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
                 <td className="px-3 py-3">
                   <StatusBadge status={r.geofenceStatus} />
                 </td>
-                <td className="tabular whitespace-nowrap px-3 py-3">{dateFmt.format(new Date(r.createdAt))}</td>
+                <td className="tabular whitespace-nowrap px-3 py-3">{formatDateTime(r.createdAt)}</td>
                 <td className="px-3 py-3">
                   <Details r={r} />
                 </td>
@@ -181,7 +172,7 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
                 {formatDistance(r.distanceM)}
                 {r.lowAccuracy && <span className="text-warn"> · low accuracy</span>}
               </span>
-              <span>{dateFmt.format(new Date(r.createdAt))}</span>
+              <span>{formatDateTime(r.createdAt)}</span>
             </div>
             <div className="mt-2">
               <Details r={r} />

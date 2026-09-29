@@ -88,12 +88,18 @@ export function ClearAllData({ total }: { total: number }) {
         // While deleting, the dialog can't be dismissed: `closedby="none"` where supported,
         // cancel is prevented, and if a browser closes it anyway (Chromium allows a repeated
         // Esc to bypass preventDefault) it is reopened so the progress stays visible.
-        {...({ closedby: pending ? "none" : "any" } as object)}
+        closedby={pending ? "none" : "any"}
         onCancel={(e) => {
           if (inFlight.current) e.preventDefault();
         }}
         onClose={() => {
-          if (inFlight.current) dialogRef.current?.showModal();
+          const d = dialogRef.current;
+          if (!inFlight.current || !d || d.open || !d.isConnected) return;
+          try {
+            d.showModal();
+          } catch {
+            // Can't reopen (e.g. navigating away) — the header button still shows "Clearing…".
+          }
         }}
         onPointerDown={(e) => {
           pressedOnBackdrop.current = e.target === dialogRef.current;

@@ -265,8 +265,10 @@ has been used, until it expires. It sits outside `submissions`, so **Clear All D
 can't make a used verification valid again. Expired rows are pruned automatically.
 
 A third table, `admin_audit_log` (`at`, `actor`, `action`, `details`), permanently records destructive admin actions.
-**Clear All Data** empties `submissions` with `TRUNCATE`, in the same transaction as its audit entry (actor + number of
-records), so both happen or neither does. The dashboard shows who last cleared the data, and when.
+**Clear All Data** empties `submissions` with a plain `DELETE`, in the same transaction as its audit entry (actor +
+number of records), so both happen or neither does. It deliberately avoids `TRUNCATE`, which needs a table-exclusive
+lock that would queue behind any open read and block every check-in in the meantime. A `DELETE` only takes row locks,
+so check-ins and the dashboard keep working while it runs. The dashboard shows who last cleared the data, and when.
 
 The migration is additive and idempotent. Existing rows are untouched, and `npm run db:migrate` upgrades an existing
 database in place.
@@ -313,6 +315,7 @@ npm run build && npm start
 ### 6. Test
 ```bash
 npm test               # Vitest: geofence cases, server-side validation, auth
+npm run test:db        # optional: database integration tests (see below)
 npm run typecheck
 npm run lint
 ```
@@ -336,6 +339,17 @@ The test suite covers:
   - Invalid name, designation, institution, email or mobile is rejected.
 - Mobile number normalization (Indian and international), QR SVG path
 - Password hashing, session-token tampering/expiry, rate limiter, DB connection options
+
+**Database integration tests** (`npm run test:db`) run against a real, disposable PostgreSQL database. Set
+`TEST_DATABASE_URL` in `.env.local`, for example `postgres://geofence:geofence@localhost:5433/geofence_test` with the
+Docker database. The test creates the database if needed and rebuilds its schema, so it refuses anything but a local
+host with a database name ending in `_test`. The tests cover:
+- storing a check-in and single-use verifications
+- replay protection surviving Clear All Data
+- Clear All Data's exact count, audit entry and all-or-nothing behaviour
+- a regression test that Clear All Data never waits on concurrent readers (which is what `TRUNCATE` would do)
+
+Without `TEST_DATABASE_URL`, these tests are skipped.
 
 ---
 

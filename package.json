@@ -11,7 +11,8 @@
     "autopush": "node scripts/autopush.mjs",
     "db:migrate": "tsx scripts/migrate.ts",
     "hash-password": "tsx scripts/hash-password.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:db": "vitest run tests/db.integration.test.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

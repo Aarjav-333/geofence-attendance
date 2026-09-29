@@ -126,17 +126,17 @@ export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionSta
 
 /**
  * Permanently delete every attendance record (the `submissions` table only) and
- * write a permanent audit entry — atomically: either both happen or neither.
- * TRUNCATE is constant-time and leaves no dead rows (unlike a table-wide DELETE).
- * Schema, used_verifications (replay guard), admin accounts and settings are untouched.
+ * write a permanent audit entry — in one transaction: either both happen or neither.
+ *
+ * A plain DELETE (not TRUNCATE) on purpose: it takes only row-level locks, so check-ins
+ * and dashboard reads keep working while it runs; it is MVCC-safe for concurrent
+ * readers; it needs no TRUNCATE privilege; and its row count is exact. Dead rows are
+ * reclaimed by autovacuum. Schema, used_verifications (replay guard), admin accounts
+ * and settings are untouched.
  */
 export async function clearAllSubmissions(actor: string): Promise<number> {
   return db().begin(async (sql) => {
-    await sql`SET LOCAL lock_timeout = '10s'`; // don't hang behind a stuck transaction
-    // Exclusive lock first, so the count matches exactly what TRUNCATE removes.
-    await sql`LOCK TABLE submissions IN ACCESS EXCLUSIVE MODE`;
-    const [{ count }] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM submissions`;
-    await sql`TRUNCATE submissions`;
+    const { count } = await sql`DELETE FROM submissions`;
     await sql`
       INSERT INTO admin_audit_log (actor, action, details)
       VALUES (${actor}, 'clear_all_attendance', ${sql.json({ deleted: count })})`;

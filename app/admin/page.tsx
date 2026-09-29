@@ -6,7 +6,8 @@ import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
 import { SubmissionsTable } from "@/components/admin/submissions-table";
 import { filtersToSearch, parseFilters } from "@/lib/admin-filters";
 import { requireAdmin } from "@/lib/auth";
-import { getDisplayTimezone, getGeofenceConfig } from "@/lib/config";
+import { getGeofenceConfig } from "@/lib/config";
+import { formatDateTime } from "@/lib/datetime";
 import { getLastClearAll, getStats, listInstitutions, listSubmissions } from "@/lib/db";
 import { logout } from "./actions";
 
@@ -21,7 +22,12 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
     getStats(),
     listInstitutions(),
     listSubmissions(filters),
-    getLastClearAll(),
+    // Optional line: if the audit table is unavailable (e.g. migration not yet applied),
+    // the dashboard still renders — just without "Last cleared".
+    getLastClearAll().catch((err) => {
+      console.error("[admin] could not read the audit log", err);
+      return null;
+    }),
   ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
 
@@ -36,12 +42,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
           </p>
           {lastClear && (
             <p className="text-xs text-muted">
-              Last cleared by {lastClear.actor} on{" "}
-              {new Intl.DateTimeFormat("en-IN", {
-                dateStyle: "medium",
-                timeStyle: "short",
-                timeZone: getDisplayTimezone(),
-              }).format(new Date(lastClear.at))}
+              Last cleared by {lastClear.actor} on {formatDateTime(lastClear.at)}
               {typeof lastClear.details?.deleted === "number" && ` (${lastClear.details.deleted} records)`}
             </p>
           )}
