@@ -264,6 +264,10 @@ A second table, `used_verifications` (`verification_id` PK, `expires_at`), recor
 has been used, until it expires. It sits outside `submissions`, so **Clear All Data** (which empties `submissions` only)
 can't make a used verification valid again. Expired rows are pruned automatically.
 
+A third table, `admin_audit_log` (`at`, `actor`, `action`, `details`), permanently records destructive admin actions.
+**Clear All Data** empties `submissions` with `TRUNCATE`, in the same transaction as its audit entry (actor + number of
+records), so both happen or neither does. The dashboard shows who last cleared the data, and when.
+
 The migration is additive and idempotent. Existing rows are untouched, and `npm run db:migrate` upgrades an existing
 database in place.
 

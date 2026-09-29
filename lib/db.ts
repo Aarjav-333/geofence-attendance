@@ -125,12 +125,38 @@ export async function getStats(tz = getDisplayTimezone()): Promise<SubmissionSta
 }
 
 /**
- * Permanently delete every attendance record (the `submissions` table only).
- * Schema, admin accounts (environment config) and all settings are untouched.
+ * Permanently delete every attendance record (the `submissions` table only) and
+ * write a permanent audit entry — atomically: either both happen or neither.
+ * TRUNCATE is constant-time and leaves no dead rows (unlike a table-wide DELETE).
+ * Schema, used_verifications (replay guard), admin accounts and settings are untouched.
  */
-export async function deleteAllSubmissions(): Promise<number> {
-  const result = await db()`DELETE FROM submissions`;
-  return result.count;
+export async function clearAllSubmissions(actor: string): Promise<number> {
+  return db().begin(async (sql) => {
+    await sql`SET LOCAL lock_timeout = '10s'`; // don't hang behind a stuck transaction
+    // Exclusive lock first, so the count matches exactly what TRUNCATE removes.
+    await sql`LOCK TABLE submissions IN ACCESS EXCLUSIVE MODE`;
+    const [{ count }] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM submissions`;
+    await sql`TRUNCATE submissions`;
+    await sql`
+      INSERT INTO admin_audit_log (actor, action, details)
+      VALUES (${actor}, 'clear_all_attendance', ${sql.json({ deleted: count })})`;
+    return count;
+  }) as Promise<number>;
+}
+
+export interface AuditEntry {
+  at: Date;
+  actor: string;
+  details: { deleted?: number };
+}
+
+/** The most recent "Clear All Data", for display on the dashboard. */
+export async function getLastClearAll(): Promise<AuditEntry | null> {
+  const [row] = await db()<AuditEntry[]>`
+    SELECT at, actor, details FROM admin_audit_log
+    WHERE action = 'clear_all_attendance'
+    ORDER BY at DESC LIMIT 1`;
+  return row ?? null;
 }
 
 export async function listInstitutions(): Promise<string[]> {

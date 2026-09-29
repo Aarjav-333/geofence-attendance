@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { getAdminSession } from "@/lib/auth";
-import { deleteAllSubmissions } from "@/lib/db";
+import { clearAllSubmissions } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { authenticate } from "@/lib/admin-accounts";
 import { getAdminAccounts, getSessionSecret } from "@/lib/config";
@@ -74,11 +74,11 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
     return { ok: false, code: "UNAUTHENTICATED", error: "Your session has expired. Please sign in again." };
   }
 
-  // 2. The delete itself. If the database call fails we can't be certain whether it
-  //    committed (e.g. the connection dropped afterwards), so don't claim either way.
+  // 2. The delete (+ audit entry, one transaction). If the database call fails we can't be
+  //    certain whether it committed (e.g. the connection dropped afterwards), so don't claim either way.
   let deleted: number;
   try {
-    deleted = await deleteAllSubmissions();
+    deleted = await clearAllSubmissions(session.sub); // also writes the audit log entry
   } catch (err) {
     console.error("[admin] clear all attendance data failed", err);
     return {

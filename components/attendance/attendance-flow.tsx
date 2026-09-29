@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
+import { Spinner } from "@/components/ui/spinner";
 import { formatDistance } from "@/lib/geo";
 import { employeeSchema, fieldErrors as toFieldErrors, validateEmployeeField, type EmployeeField } from "@/lib/validation";
 import type { CheckInResponse, VerifyResponse } from "@/types/submission";
@@ -230,7 +231,7 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
 
         {(phase.k === "locating" || phase.k === "verifying") && (
           <div aria-live="polite" className="flex flex-col items-center gap-3 py-4 text-center">
-            <Spinner />
+            <Spinner className="size-8 border-3 border-accent" />
             <p className="font-medium">{phase.k === "locating" ? "Detecting your location…" : "Verifying your location…"}</p>
             <p className="text-sm text-muted">
               {phase.k === "locating" ? "Please wait. Allow location access if your browser asks." : "Please wait."}
@@ -357,10 +358,6 @@ function Field({ id, label, required, error, children }: { id: string; label: st
       )}
     </div>
   );
-}
-
-function Spinner() {
-  return <span className="size-8 animate-spin rounded-full border-3 border-accent border-t-transparent" aria-hidden />;
 }
 
 function PinIcon() {

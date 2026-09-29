@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { clearAllAttendance } from "@/app/admin/actions";
+import { Spinner } from "@/components/ui/spinner";
 
 /**
  * "Clear All Data" — permanently deletes every attendance record after an explicit
@@ -16,6 +17,9 @@ export function ClearAllData({ total }: { total: number }) {
   // Synchronous lock: `pending` only updates on the next render, so rapid clicks would
   // otherwise all get through before the button is disabled.
   const inFlight = useRef(false);
+  // Backdrop dismissal only when the press both started and ended on the backdrop
+  // (a text-selection drag that ends outside the panel must not close the dialog).
+  const pressedOnBackdrop = useRef(false);
 
   function open() {
     setMessage(null);
@@ -30,37 +34,44 @@ export function ClearAllData({ total }: { total: number }) {
     if (inFlight.current) return; // exactly one request, however many clicks
     inFlight.current = true;
     startTransition(async () => {
+      let outcome: { tone: "ok" | "bad"; text: string } | "login";
       try {
         const r = await clearAllAttendance();
-        dialogRef.current?.close();
-        if (!r.ok && r.code === "UNAUTHENTICATED") {
-          router.replace("/admin/login"); // session expired: nothing was deleted, sign in again
-          return;
-        }
-        setMessage(
-          r.ok
-            ? { tone: "ok", text: `All attendance data has been cleared successfully (${r.deleted} record${r.deleted === 1 ? "" : "s"} deleted).` }
-            : { tone: "bad", text: r.error },
-        );
+        outcome =
+          !r.ok && r.code === "UNAUTHENTICATED"
+            ? "login" // session expired: nothing was deleted, sign in again
+            : r.ok
+              ? { tone: "ok", text: `All attendance data has been cleared successfully (${r.deleted} record${r.deleted === 1 ? "" : "s"} deleted).` }
+              : { tone: "bad", text: r.error };
       } catch {
-        dialogRef.current?.close();
         // No response (network failure or server crash): the request may or may not have
         // been processed, so don't claim either outcome.
-        setMessage({ tone: "bad", text: "Could not confirm the result (no response from the server). Refresh the page to see the current data, then try again if needed." });
-      } finally {
-        inFlight.current = false;
+        outcome = { tone: "bad", text: "Could not confirm the result (no response from the server). Refresh the page to see the current data, then try again if needed." };
       }
+      inFlight.current = false; // release the lock first, so our own close() isn't undone
+      dialogRef.current?.close();
+      if (outcome === "login") router.replace("/admin/login");
+      else setMessage(outcome);
     });
   }
 
   return (
     <>
+      {/* Also shows progress, so it stays visible even if a browser force-closes the dialog. */}
       <button
         type="button"
         onClick={open}
+        disabled={pending}
+        aria-busy={pending}
         className="btn py-2 text-sm border border-bad/40 text-bad hover:bg-bad-bg"
       >
-        Clear All Data
+        {pending ? (
+          <>
+            <Spinner /> Clearing…
+          </>
+        ) : (
+          "Clear All Data"
+        )}
       </button>
 
       {message && (
@@ -74,11 +85,22 @@ export function ClearAllData({ total }: { total: number }) {
 
       <dialog
         ref={dialogRef}
+        // While deleting, the dialog can't be dismissed: `closedby="none"` where supported,
+        // cancel is prevented, and if a browser closes it anyway (Chromium allows a repeated
+        // Esc to bypass preventDefault) it is reopened so the progress stays visible.
+        {...({ closedby: pending ? "none" : "any" } as object)}
         onCancel={(e) => {
-          if (inFlight.current) e.preventDefault(); // Esc can't abandon an in-flight delete
+          if (inFlight.current) e.preventDefault();
+        }}
+        onClose={() => {
+          if (inFlight.current) dialogRef.current?.showModal();
+        }}
+        onPointerDown={(e) => {
+          pressedOnBackdrop.current = e.target === dialogRef.current;
         }}
         onClick={(e) => {
-          if (e.target === dialogRef.current) close(); // click on backdrop
+          if (pressedOnBackdrop.current && e.target === dialogRef.current) close();
+          pressedOnBackdrop.current = false;
         }}
         aria-labelledby="clear-all-title"
         aria-describedby="clear-all-desc"
@@ -110,7 +132,7 @@ export function ClearAllData({ total }: { total: number }) {
             >
               {pending ? (
                 <>
-                  <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+                  <Spinner />
                   Clearing…
                 </>
               ) : (

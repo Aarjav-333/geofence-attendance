@@ -98,3 +98,14 @@ SELECT verification_id, created_at + interval '10 minutes', created_at
 FROM submissions
 WHERE verification_id IS NOT NULL AND created_at > now() - interval '10 minutes'
 ON CONFLICT (verification_id) DO NOTHING;
+
+-- ── v4: admin audit log ─────────────────────────────────────────────────────
+-- Permanent record of destructive admin actions (e.g. "Clear All Data").
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id         bigserial PRIMARY KEY,
+  at         timestamptz NOT NULL DEFAULT now(),
+  actor      text NOT NULL CHECK (char_length(actor) BETWEEN 1 AND 64),
+  action     text NOT NULL CHECK (char_length(action) BETWEEN 1 AND 64),
+  details    jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS admin_audit_log_action_at_idx ON admin_audit_log (action, at DESC);

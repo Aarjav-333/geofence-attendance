@@ -6,8 +6,8 @@ import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
 import { SubmissionsTable } from "@/components/admin/submissions-table";
 import { filtersToSearch, parseFilters } from "@/lib/admin-filters";
 import { requireAdmin } from "@/lib/auth";
-import { getGeofenceConfig } from "@/lib/config";
-import { getStats, listInstitutions, listSubmissions } from "@/lib/db";
+import { getDisplayTimezone, getGeofenceConfig } from "@/lib/config";
+import { getLastClearAll, getStats, listInstitutions, listSubmissions } from "@/lib/db";
 import { logout } from "./actions";
 
 export const metadata: Metadata = { title: "Admin dashboard", robots: { index: false, follow: false } };
@@ -17,7 +17,12 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   const filters = parseFilters(await searchParams);
   const geofence = getGeofenceConfig();
 
-  const [stats, institutions, result] = await Promise.all([getStats(), listInstitutions(), listSubmissions(filters)]);
+  const [stats, institutions, result, lastClear] = await Promise.all([
+    getStats(),
+    listInstitutions(),
+    listSubmissions(filters),
+    getLastClearAll(),
+  ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
 
   return (
@@ -29,6 +34,17 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
             Workplace: {geofence.target.latitude.toFixed(6)}, {geofence.target.longitude.toFixed(6)} · radius{" "}
             {geofence.radiusMeters} m
           </p>
+          {lastClear && (
+            <p className="text-xs text-muted">
+              Last cleared by {lastClear.actor} on{" "}
+              {new Intl.DateTimeFormat("en-IN", {
+                dateStyle: "medium",
+                timeStyle: "short",
+                timeZone: getDisplayTimezone(),
+              }).format(new Date(lastClear.at))}
+              {typeof lastClear.details?.deleted === "number" && ` (${lastClear.details.deleted} records)`}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link href="/admin/qr" className="btn-secondary py-2 text-sm">
