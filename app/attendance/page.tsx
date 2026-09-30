@@ -15,8 +15,14 @@ export const dynamic = "force-dynamic";
  */
 export default async function AttendancePage() {
   const { radiusMeters } = getGeofenceConfig();
-  // Admin switch (checked on every request; the API enforces it too).
-  const { open } = await getAttendanceStatus();
+  // Admin switch (checked on every request). If the setting can't be read (e.g. a brief DB
+  // outage), show the normal flow rather than an error page — the API enforces the switch.
+  const open = await getAttendanceStatus()
+    .then((s) => s.open)
+    .catch((err) => {
+      console.error("[attendance] could not read attendance status; showing the flow", err);
+      return true;
+    });
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 py-8 sm:py-14">
@@ -35,7 +41,7 @@ export default async function AttendancePage() {
           </footer>
         </>
       ) : (
-        <AttendanceClosed />
+        <AttendanceClosed retryHref="/attendance" />
       )}
     </main>
   );

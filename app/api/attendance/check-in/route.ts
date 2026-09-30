@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { checkIn } from "@/lib/attendance-service";
 import { getGeofenceConfig, getLowAccuracyThreshold, getMaxAccuracy, getSessionSecret } from "@/lib/config";
-import { getAttendanceStatus, insertSubmission } from "@/lib/db";
+import { insertSubmission } from "@/lib/db";
 import { json, readJsonBody, tooManyRequests } from "@/lib/http";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
         maxAccuracy: getMaxAccuracy(),
         lowAccuracyThreshold: getLowAccuracyThreshold(),
         secret: getSessionSecret(),
-        attendanceOpen: (await getAttendanceStatus()).open,
+        // Open/closed is enforced inside insertSubmission's transaction (no extra query here,
+        // and no race with an admin closing attendance mid-request).
         insert: insertSubmission,
       },
     );

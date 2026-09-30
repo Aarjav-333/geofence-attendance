@@ -245,6 +245,10 @@ export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDep
     });
     return { ok: true, submission };
   } catch (err) {
+    // Raised by the store when attendance was closed (checked inside the insert transaction)
+    if ((err as { code?: string }).code === "ATTENDANCE_CLOSED") {
+      return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
+    }
     if ((err as { code?: string }).code === "23505") {
       return {
         ok: false,

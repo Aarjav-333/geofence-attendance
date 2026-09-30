@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { getAdminSession } from "@/lib/auth";
-import { clearAllSubmissions, setAttendanceOpen } from "@/lib/db";
+import { clearAllSubmissions, isUndefinedTable, setAttendanceOpen } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { authenticate } from "@/lib/admin-accounts";
 import { getAdminAccounts, getSessionSecret } from "@/lib/config";
@@ -83,7 +83,7 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
     console.error("[admin] clear all attendance data failed", err);
     const pg = err as { code?: string };
     // The whole clear is one transaction, so these specific failures mean nothing was deleted.
-    if (pg.code === "42P01") {
+    if (isUndefinedTable(err)) {
       // undefined_table: the admin_audit_log migration hasn't been applied to this database
       return {
         ok: false,
@@ -141,7 +141,7 @@ export async function setAttendanceAccepting(open: unknown): Promise<AttendanceT
     await setAttendanceOpen(open, session.sub); // also writes the audit log entry
   } catch (err) {
     console.error("[admin] attendance toggle failed", err);
-    const missingTable = (err as { code?: string }).code === "42P01";
+    const missingTable = isUndefinedTable(err);
     return {
       ok: false,
       code: "SERVER_ERROR",
@@ -153,8 +153,7 @@ export async function setAttendanceAccepting(open: unknown): Promise<AttendanceT
 
   console.info(`[admin] ${session.sub} ${open ? "opened" : "closed"} attendance`);
   try {
-    revalidatePath("/admin");
-    revalidatePath("/attendance");
+    revalidatePath("/admin"); // (/attendance is force-dynamic, so there is nothing to revalidate there)
   } catch (err) {
     console.error("[admin] attendance toggle: revalidatePath failed (setting was saved)", err);
   }

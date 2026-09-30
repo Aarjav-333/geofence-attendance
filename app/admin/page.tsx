@@ -29,7 +29,12 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       console.error("[admin] could not read the audit log", err);
       return null;
     }),
-    getAttendanceStatus(),
+    // If the setting can't be read, show the switch in an "unknown" state instead of
+    // failing the whole dashboard (the admin may need it to fix things).
+    getAttendanceStatus().catch((err) => {
+      console.error("[admin] could not read attendance status", err);
+      return null;
+    }),
   ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
 
@@ -67,10 +72,10 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       </header>
 
       <AttendanceToggle
-        key={String(attendance.open)}
-        open={attendance.open}
+        key={String(attendance?.open)}
+        open={attendance ? attendance.open : null}
         lastChanged={
-          attendance.updatedAt && attendance.updatedBy
+          attendance?.updatedAt && attendance.updatedBy
             ? `Last changed by ${attendance.updatedBy} on ${formatDateTime(attendance.updatedAt)}`
             : null
         }

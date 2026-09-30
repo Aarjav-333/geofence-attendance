@@ -189,7 +189,8 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
     setErrors((errs) => ({ ...errs, [field]: validateEmployeeField(field, form[field]) ?? "" }));
   };
 
-  if (phase.k === "closed") return <AttendanceClosed />;
+  // "Check again" re-runs the location step; the details typed so far are kept.
+  if (phase.k === "closed") return <AttendanceClosed onRetry={detectLocation} />;
 
   if (phase.k === "done") {
     return (

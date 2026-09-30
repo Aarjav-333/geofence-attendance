@@ -11,6 +11,19 @@ import type { VerifyResponse } from "@/types/submission";
 const limiter = createRateLimiter({ limit: 300, windowMs: 10 * 60 * 1000 });
 
 /**
+ * Closed → no verification is issued. If the setting can't be read (e.g. a DB blip) we
+ * assume open: check-in re-checks it authoritatively inside its own transaction.
+ */
+async function attendanceOpenOrAssumeOpen(): Promise<boolean> {
+  try {
+    return (await getAttendanceStatus()).open;
+  } catch (err) {
+    console.error("[attendance/verify] could not read attendance status; assuming open", err);
+    return true;
+  }
+}
+
+/**
  * Step 1 of attendance: server-side geofence check of a raw GPS fix.
  * Returns the distance/status, plus a short-lived verification token ONLY when
  * the fix is within the authorized radius. Nothing is stored.
@@ -28,7 +41,7 @@ export async function POST(request: NextRequest) {
       maxAccuracy: getMaxAccuracy(),
       lowAccuracyThreshold: getLowAccuracyThreshold(),
       secret: getSessionSecret(),
-      attendanceOpen: (await getAttendanceStatus()).open,
+      attendanceOpen: await attendanceOpenOrAssumeOpen(),
     });
     if (!r.ok) {
       return json<VerifyResponse>({ ok: false, error: r.error, code: r.code, fieldErrors: r.fieldErrors }, r.status);

@@ -40,6 +40,12 @@ const COLUMNS = (sql: postgres.Sql | postgres.TransactionSql) => sql`
 export async function insertSubmission(s: NewSubmission): Promise<Submission> {
   return db().begin(async (sql) => {
     if (s.verificationId) {
+      // Authoritative open/closed check, inside this transaction: FOR SHARE makes a
+      // concurrent "close" wait for this check-in (or this check-in see the close), so no
+      // check-in can be stored after attendance was closed.
+      if (!(await attendanceOpenLocked(sql))) {
+        throw Object.assign(new Error("Attendance is closed"), { code: ATTENDANCE_CLOSED });
+      }
       await sql`DELETE FROM used_verifications WHERE expires_at < now() - interval '1 hour'`;
       await sql`
         INSERT INTO used_verifications (verification_id, expires_at)
@@ -168,6 +174,34 @@ export async function listInstitutions(): Promise<string[]> {
   return rows.map((r) => r.institution);
 }
 
+/** Error code thrown by insertSubmission when attendance is closed. */
+export const ATTENDANCE_CLOSED = "ATTENDANCE_CLOSED";
+
+/** Postgres "undefined_table" — the schema migration hasn't been applied to this database. */
+export function isUndefinedTable(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "42P01";
+}
+
+/** Strict: only a stored JSON boolean decides; anything else is treated as closed (and logged). */
+function parseAttendanceOpen(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  console.warn("[settings] attendance_open has a non-boolean value; treating attendance as closed:", value);
+  return false;
+}
+
+async function attendanceOpenLocked(sql: postgres.TransactionSql): Promise<boolean> {
+  try {
+    // Savepoint: if the table doesn't exist yet, only this statement is rolled back.
+    const rows = await sql.savepoint(
+      (sp) => sp<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'attendance_open' FOR SHARE`,
+    );
+    return rows.length === 0 ? true : parseAttendanceOpen(rows[0].value);
+  } catch (err) {
+    if (isUndefinedTable(err)) return true; // un-migrated database: behave as before (open)
+    throw err;
+  }
+}
+
 export interface AttendanceStatus {
   open: boolean;
   updatedAt: Date | null;
@@ -183,10 +217,16 @@ export async function getAttendanceStatus(): Promise<AttendanceStatus> {
   try {
     const [row] = await db()<{ value: unknown; updatedAt: Date; updatedBy: string }[]>`
       SELECT value, updated_at, updated_by FROM app_settings WHERE key = 'attendance_open'`;
+    // No row, or only the migration's default row → never changed by an admin
     if (!row) return { open: true, updatedAt: null, updatedBy: null };
-    return { open: row.value !== false, updatedAt: row.updatedAt, updatedBy: row.updatedBy };
+    const changedByAdmin = row.updatedBy !== "system";
+    return {
+      open: parseAttendanceOpen(row.value),
+      updatedAt: changedByAdmin ? row.updatedAt : null,
+      updatedBy: changedByAdmin ? row.updatedBy : null,
+    };
   } catch (err) {
-    if ((err as { code?: string }).code === "42P01") return { open: true, updatedAt: null, updatedBy: null };
+    if (isUndefinedTable(err)) return { open: true, updatedAt: null, updatedBy: null };
     throw err;
   }
 }

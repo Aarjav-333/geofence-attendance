@@ -251,3 +251,14 @@ describe("attendance open/closed switch", () => {
     expect((await verifyLocation(fixAt(10), deps().d)).ok).toBe(true);
   });
 });
+
+describe("attendance closed at the moment of storing", () => {
+  it("maps the store's ATTENDANCE_CLOSED (checked inside the insert transaction) to 403", async () => {
+    const insert = vi.fn(async () => {
+      throw Object.assign(new Error("Attendance is closed"), { code: "ATTENDANCE_CLOSED" });
+    });
+    const { d } = deps({ insert });
+    const r = await checkIn({ ...EMPLOYEE, verificationToken: await tokenFor(10) }, META, d);
+    expect(r).toMatchObject({ ok: false, status: 403, code: "ATTENDANCE_CLOSED" });
+  });
+});

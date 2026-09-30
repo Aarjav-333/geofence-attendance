@@ -189,10 +189,57 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     expect(log.map((r) => `${r.actor}:${r.action}`)).toEqual(["master:attendance_closed", "admin:attendance_opened"]);
   });
 
+  const resetSetting = () =>
+    admin`INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, 'system')
+          ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_by = 'system'`;
+
   it("the attendance switch is all-or-nothing with its audit entry", async () => {
-    await admin`DELETE FROM app_settings`;
-    await expect(dbmod.setAttendanceOpen(false, "x".repeat(65))).rejects.toBeTruthy(); // actor too long
-    expect((await dbmod.getAttendanceStatus()).open).toBe(true);
+    await resetSetting();
+    // Make only the SECOND statement (the audit insert) fail, so a missing transaction would show
+    await admin`ALTER TABLE admin_audit_log ADD CONSTRAINT test_block_close CHECK (action <> 'attendance_closed')`;
+    try {
+      await expect(dbmod.setAttendanceOpen(false, "master")).rejects.toBeTruthy();
+    } finally {
+      await admin`ALTER TABLE admin_audit_log DROP CONSTRAINT test_block_close`;
+    }
+    expect((await dbmod.getAttendanceStatus()).open).toBe(true); // setting write was rolled back too
+  });
+
+  it("the migration's default row counts as open and 'never changed'", async () => {
+    await resetSetting();
+    expect(await dbmod.getAttendanceStatus()).toEqual({ open: true, updatedAt: null, updatedBy: null });
+  });
+
+  it("reads the setting strictly: a non-boolean value is treated as closed", async () => {
+    await admin`UPDATE app_settings SET value = '"false"'::jsonb, updated_by = 'manual' WHERE key = 'attendance_open'`;
+    expect((await dbmod.getAttendanceStatus()).open).toBe(false);
+    await resetSetting();
+  });
+
+  it("while closed, insertSubmission refuses check-ins and doesn't consume the verification", async () => {
+    await dbmod.setAttendanceOpen(false, "master");
+    const c = checkIn();
+    await expect(dbmod.insertSubmission(c)).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" });
+    expect(await count("submissions")).toBe(0);
+    expect(await count("used_verifications")).toBe(0);
+    await resetSetting();
+  });
+
+  it("no race: a check-in in flight when attendance is closed is refused, not stored", async () => {
+    await resetSetting();
+    let insertSettled = false;
+    let pendingInsert!: Promise<unknown>;
+    await admin.begin(async (tx) => {
+      // The admin's close is in progress (row updated, not yet committed)…
+      await tx`UPDATE app_settings SET value = 'false'::jsonb, updated_by = 'master' WHERE key = 'attendance_open'`;
+      // …when a check-in arrives: it must wait for the decision instead of reading the old value.
+      pendingInsert = dbmod.insertSubmission(checkIn()).finally(() => (insertSettled = true));
+      await new Promise((r) => setTimeout(r, 500));
+      expect(insertSettled).toBe(false); // blocked on the setting row
+    }); // commit the close
+    await expect(pendingInsert).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" });
+    expect(await count("submissions")).toBe(0);
+    await resetSetting();
   });
 
   it("getLastClearAll returns null when nothing has been cleared", async () => {

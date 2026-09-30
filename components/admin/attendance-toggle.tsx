@@ -6,7 +6,8 @@ import { setAttendanceAccepting } from "@/app/admin/actions";
 import { Spinner } from "@/components/ui/spinner";
 
 interface Props {
-  open: boolean;
+  /** null = the current setting couldn't be read */
+  open: boolean | null;
   /** e.g. "Changed by master on 30 Sept 2026, 9:05 am" — preformatted on the server */
   lastChanged: string | null;
 }
@@ -14,15 +15,14 @@ interface Props {
 /** Admin switch: accept attendance (open) or show "Attendance Closed" to employees. */
 export function AttendanceToggle({ open: initialOpen, lastChanged }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(initialOpen);
+  const [open, setOpen] = useState<boolean | null>(initialOpen);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false); // one request at a time, even on rapid clicks
 
-  function toggle() {
+  function change(next: boolean) {
     if (inFlight.current) return;
     inFlight.current = true;
-    const next = !open;
     setError(null);
     startTransition(async () => {
       try {
@@ -36,6 +36,29 @@ export function AttendanceToggle({ open: initialOpen, lastChanged }: Props) {
         inFlight.current = false;
       }
     });
+  }
+
+  if (open === null) {
+    return (
+      <section aria-label="Attendance status" className="mb-6 rounded-xl border border-warn/40 bg-warn-bg p-4">
+        <p className="font-semibold text-warn">Attendance status unknown</p>
+        <p className="text-sm text-muted">The current setting couldn&apos;t be read. You can still set it explicitly:</p>
+        {error && (
+          <p role="alert" className="mt-1 text-sm text-bad">
+            {error}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => change(true)} disabled={pending} className="btn-secondary py-2 text-sm">
+            Open attendance
+          </button>
+          <button type="button" onClick={() => change(false)} disabled={pending} className="btn-secondary py-2 text-sm">
+            Close attendance
+          </button>
+          {pending && <Spinner />}
+        </div>
+      </section>
+    );
   }
 
   return (
@@ -69,7 +92,7 @@ export function AttendanceToggle({ open: initialOpen, lastChanged }: Props) {
           role="switch"
           aria-checked={open}
           aria-label="Accept attendance"
-          onClick={toggle}
+          onClick={() => change(!open)}
           disabled={pending}
           className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition disabled:opacity-60 ${
             open ? "bg-ok" : "bg-muted/50"

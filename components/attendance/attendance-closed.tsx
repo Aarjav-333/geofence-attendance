@@ -1,5 +1,9 @@
-/** Shown instead of the attendance flow while an admin has closed attendance. */
-export function AttendanceClosed() {
+/**
+ * Shown instead of the attendance flow while an admin has closed attendance.
+ * `onRetry` (client flow: keeps the typed details) or `retryHref` (server page: reload)
+ * lets the employee check again once attendance is reopened.
+ */
+export function AttendanceClosed({ onRetry, retryHref }: { onRetry?: () => void; retryHref?: string }) {
   return (
     <section
       role="status"
@@ -17,6 +21,15 @@ export function AttendanceClosed() {
         <p className="mt-1 text-muted">Attendance is not being accepted at the moment.</p>
         <p className="mt-1 text-sm text-muted">Please check with your administrator.</p>
       </div>
+      {onRetry ? (
+        <button type="button" onClick={onRetry} className="btn-secondary w-full">
+          Check again
+        </button>
+      ) : retryHref ? (
+        <a href={retryHref} className="btn-secondary w-full">
+          Check again
+        </a>
+      ) : null}
     </section>
   );
 }
