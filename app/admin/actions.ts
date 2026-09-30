@@ -137,8 +137,9 @@ export async function setAttendanceAccepting(open: unknown): Promise<AttendanceT
   }
   if (!session) return { ok: false, code: "UNAUTHENTICATED", error: "Your session has expired. Please sign in again." };
 
+  let changed: boolean;
   try {
-    await setAttendanceOpen(open, session.sub); // also writes the audit log entry
+    changed = await setAttendanceOpen(open, session.sub); // also writes the audit entry (if changed)
   } catch (err) {
     console.error("[admin] attendance toggle failed", err);
     const missingTable = isUndefinedTable(err);
@@ -151,7 +152,11 @@ export async function setAttendanceAccepting(open: unknown): Promise<AttendanceT
     };
   }
 
-  console.info(`[admin] ${session.sub} ${open ? "opened" : "closed"} attendance`);
+  console.info(
+    changed
+      ? `[admin] ${session.sub} ${open ? "opened" : "closed"} attendance`
+      : `[admin] ${session.sub} set attendance ${open ? "open" : "closed"} (already so — nothing changed)`,
+  );
   try {
     revalidatePath("/admin"); // (/attendance is force-dynamic, so there is nothing to revalidate there)
   } catch (err) {

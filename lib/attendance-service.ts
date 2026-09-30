@@ -1,4 +1,5 @@
 import { evaluateGeofence, type GeofenceConfig, type GeofenceResult } from "./geo";
+import { ATTENDANCE_CLOSED, ATTENDANCE_CLOSED_MESSAGE, isAttendanceClosedError } from "./attendance-closed";
 import { signToken, verifyToken } from "./signed-token";
 import { checkInSchema, fieldErrors, locationSchema, type LocationInput } from "./validation";
 import type { NewSubmission, Submission } from "@/types/submission";
@@ -26,9 +27,16 @@ export interface AttendanceConfig {
   /** Flag (but accept) fixes whose accuracy radius is worse than this (meters). */
   lowAccuracyThreshold: number;
   secret: string;
-  /** Admin switch: when false, no verifications are issued and no check-ins are stored. Default true. */
-  attendanceOpen?: boolean;
   now?: () => number;
+}
+
+export interface VerifyConfig extends AttendanceConfig {
+  /**
+   * Admin switch, read only for requests that would otherwise get a verification
+   * (no database round-trip for malformed/stale/imprecise fixes). Default: open.
+   * Check-in is enforced separately, inside the store's insert transaction.
+   */
+  isOpen?: () => Promise<boolean>;
 }
 
 export interface CheckInDeps extends AttendanceConfig {
@@ -57,8 +65,6 @@ interface LocationClaims {
   exp: number; // epoch s
 }
 
-export const ATTENDANCE_CLOSED_MESSAGE = "Attendance is currently closed. Please check with your administrator.";
-
 /** Domain-separated key so these tokens can never be confused with admin sessions. */
 const tokenSecret = (secret: string) => `${secret}:attendance-location:v1`;
 
@@ -75,15 +81,15 @@ export type VerifyResult =
   | {
       ok: false;
       status: 400 | 403 | 422;
-      code: "INVALID" | "POOR_ACCURACY" | "STALE_FIX" | "ATTENDANCE_CLOSED";
+      code: "INVALID" | "POOR_ACCURACY" | "STALE_FIX" | typeof ATTENDANCE_CLOSED;
       error: string;
       fieldErrors?: Record<string, string>;
     };
 
-export async function verifyLocation(body: unknown, cfg: AttendanceConfig): Promise<VerifyResult> {
-  if (cfg.attendanceOpen === false) {
-    return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
-  }
+const closedResult = () =>
+  ({ ok: false, status: 403, code: ATTENDANCE_CLOSED, error: ATTENDANCE_CLOSED_MESSAGE }) as const;
+
+export async function verifyLocation(body: unknown, cfg: VerifyConfig): Promise<VerifyResult> {
   const parsed = locationSchema.safeParse(body);
   if (!parsed.success) {
     return {
@@ -113,6 +119,9 @@ export async function verifyLocation(body: unknown, cfg: AttendanceConfig): Prom
       error: `Your location is too imprecise to verify (±${Math.round(fix.accuracy)} m; at most ±${cfg.maxAccuracy} m is needed). Turn on GPS / precise location, move near a window or outdoors, and try again.`,
     };
   }
+
+  // The request is valid — only now consult the admin switch (a DB read in production).
+  if (cfg.isOpen && !(await cfg.isOpen())) return closedResult();
 
   const result = evaluateGeofence({ latitude: fix.latitude, longitude: fix.longitude }, cfg.geofence);
   const base = {
@@ -161,17 +170,15 @@ export type CheckInResult =
   | {
       ok: false;
       status: 400 | 401 | 403 | 409 | 422;
-      code: "INVALID" | "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | "ATTENDANCE_CLOSED";
+      code: "INVALID" | "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | typeof ATTENDANCE_CLOSED;
       error: string;
       fieldErrors?: Record<string, string>;
       distanceMeters?: number;
     };
 
 export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDeps): Promise<CheckInResult> {
-  // Checked first: a verification issued before attendance was closed must not get through.
-  if (deps.attendanceOpen === false) {
-    return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
-  }
+  // Open/closed is enforced by deps.insert inside its transaction (see insertSubmission),
+  // so a verification issued before attendance was closed can't be used afterwards.
   const parsed = checkInSchema.safeParse(body);
   if (!parsed.success) {
     const errors = fieldErrors(parsed.error);
@@ -245,10 +252,8 @@ export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDep
     });
     return { ok: true, submission };
   } catch (err) {
-    // Raised by the store when attendance was closed (checked inside the insert transaction)
-    if ((err as { code?: string }).code === "ATTENDANCE_CLOSED") {
-      return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
-    }
+    // Raised by the store when attendance is closed (checked inside the insert transaction)
+    if (isAttendanceClosedError(err)) return closedResult();
     if ((err as { code?: string }).code === "23505") {
       return {
         ok: false,

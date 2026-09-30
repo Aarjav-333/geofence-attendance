@@ -230,25 +230,29 @@ describe("checkIn — authoritative server-side re-check and storage", () => {
   });
 });
 
-describe("attendance open/closed switch", () => {
+describe("attendance open/closed switch (verification step)", () => {
   it("while closed, no verification is issued (even exactly at the workplace)", async () => {
-    const r = await verifyLocation({ ...TARGET, accuracy: 5, positionTimestamp: NOW }, deps({ attendanceOpen: false }).d);
+    const r = await verifyLocation(
+      { ...TARGET, accuracy: 5, positionTimestamp: NOW },
+      { ...deps().d, isOpen: async () => false },
+    );
     expect(r).toMatchObject({ ok: false, status: 403, code: "ATTENDANCE_CLOSED" });
   });
 
-  it("while closed, a verification issued earlier (while open) can't be used to check in", async () => {
-    const token = await tokenFor(10); // obtained while attendance was open
-    const { d, insert } = deps({ attendanceOpen: false });
-    const r = await checkIn({ ...EMPLOYEE, verificationToken: token }, META, d);
-    expect(r).toMatchObject({ ok: false, status: 403, code: "ATTENDANCE_CLOSED" });
-    expect(insert).not.toHaveBeenCalled();
+  it("only consults the switch for otherwise-valid requests (no DB read for rejected fixes)", async () => {
+    const isOpen = vi.fn(async () => true);
+    const cfg = { ...deps().d, isOpen };
+    await verifyLocation({ latitude: 91, longitude: 0, accuracy: 5, positionTimestamp: NOW }, cfg); // invalid
+    await verifyLocation(fixAt(10, 0, 500), cfg); // poor accuracy
+    await verifyLocation({ ...fixAt(10), positionTimestamp: NOW - 5 * 60_000 }, cfg); // stale
+    expect(isOpen).not.toHaveBeenCalled();
+    expect((await verifyLocation(fixAt(10), cfg)).ok).toBe(true);
+    expect(isOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("open (explicitly or by default) behaves as before", async () => {
-    const token = await tokenFor(10);
-    const { d } = deps({ attendanceOpen: true });
-    expect((await checkIn({ ...EMPLOYEE, verificationToken: token }, META, d)).ok).toBe(true);
+  it("without a switch (or when open) behaves as before", async () => {
     expect((await verifyLocation(fixAt(10), deps().d)).ok).toBe(true);
+    expect((await verifyLocation(fixAt(10), { ...deps().d, isOpen: async () => true })).ok).toBe(true);
   });
 });
 

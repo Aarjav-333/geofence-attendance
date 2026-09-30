@@ -43,13 +43,15 @@ on a protected dashboard.
 - While closed, `/attendance` shows **"Attendance Closed"** instead of the location step, and the API refuses both
   location verification and check-in (`403 ATTENDANCE_CLOSED`). This includes someone who verified before it was
   closed. It's enforced on the server, not just hidden in the page.
-- The authoritative check runs inside the same database transaction that stores a check-in, locking the setting
-  row (`FOR SHARE`). A check-in racing an admin's "close" is therefore refused rather than stored, and a refused
+- The authoritative check runs inside the same database transaction that stores a check-in (every insert).
+  It's ordered against open/close by a transaction-scoped Postgres advisory lock: shared for check-ins, exclusive for
+  the switch. This doesn't depend on the settings row existing and writes nothing per check-in. A check-in racing an admin's "close" is therefore refused rather than stored, and a refused
   check-in doesn't use up the employee's location verification. The closed screen has a **Check again** button.
 - If the setting can't be read, the attendance page still shows the normal flow (the check-in step decides), and the
   dashboard shows the switch as "unknown" with explicit Open/Close buttons instead of failing. Only a stored boolean
   counts; any other value is treated as closed.
-- The setting is stored in the `app_settings` table (open by default). Every change is recorded in `admin_audit_log`,
+- The setting is stored in the `app_settings` table (open by default). Switching to the value it already has changes
+  nothing: no audit entry, and "last changed" is kept. Every change is recorded in `admin_audit_log`,
   and the dashboard shows who changed it last. Admin-only, verified server-side; `master` has the same access.
 
 **Workplace QR code** (`/admin/qr`, authenticated)

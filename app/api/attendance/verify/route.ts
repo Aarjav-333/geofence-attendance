@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       maxAccuracy: getMaxAccuracy(),
       lowAccuracyThreshold: getLowAccuracyThreshold(),
       secret: getSessionSecret(),
-      attendanceOpen: await attendanceOpenOrAssumeOpen(),
+      isOpen: attendanceOpenOrAssumeOpen, // read only for otherwise-valid requests
     });
     if (!r.ok) {
       return json<VerifyResponse>({ ok: false, error: r.error, code: r.code, fieldErrors: r.fieldErrors }, r.status);

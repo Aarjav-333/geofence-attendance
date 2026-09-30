@@ -119,6 +119,11 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text NOT NULL CHECK (char_length(updated_by) BETWEEN 1 AND 64)
 );
--- Always have the row, so check-ins can lock it (FOR SHARE) against a concurrent close.
-INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, 'system')
+-- Default row: open, marked "(default)" (not a valid admin username, so it's never
+-- mistaken for an admin's change). Check-ins are serialised against open/close with an
+-- advisory lock, so correctness doesn't depend on this row existing.
+INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, '(default)')
 ON CONFLICT (key) DO NOTHING;
+-- The previous migration marked its default row 'system'; relabel only that untouched default.
+UPDATE app_settings SET updated_by = '(default)'
+WHERE key = 'attendance_open' AND updated_by = 'system' AND value = 'true'::jsonb;

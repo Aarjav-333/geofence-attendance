@@ -1,6 +1,7 @@
 import "server-only";
 import postgres from "postgres";
 import { getDatabaseUrl, getDisplayTimezone } from "./config";
+import { attendanceClosedError } from "./attendance-closed";
 import { connectionOptions } from "./db-options";
 import type { NewSubmission, Submission, SubmissionFilters, SubmissionStats } from "@/types/submission";
 
@@ -39,13 +40,15 @@ const COLUMNS = (sql: postgres.Sql | postgres.TransactionSql) => sql`
  */
 export async function insertSubmission(s: NewSubmission): Promise<Submission> {
   return db().begin(async (sql) => {
+    // Authoritative open/closed check for EVERY insert, inside this transaction.
+    // A transaction-scoped shared advisory lock orders it against setAttendanceOpen (which
+    // takes the same lock exclusively): a "close" waits for check-ins already in flight,
+    // and check-ins arriving during a close wait for it and then see "closed". This works
+    // whether or not the settings row exists, and writes nothing (unlike SELECT … FOR SHARE).
+    await sql`SELECT pg_advisory_xact_lock_shared(${ATTENDANCE_LOCK_KEY}::bigint)`;
+    if (!(await readAttendanceOpen(sql))) throw attendanceClosedError();
+
     if (s.verificationId) {
-      // Authoritative open/closed check, inside this transaction: FOR SHARE makes a
-      // concurrent "close" wait for this check-in (or this check-in see the close), so no
-      // check-in can be stored after attendance was closed.
-      if (!(await attendanceOpenLocked(sql))) {
-        throw Object.assign(new Error("Attendance is closed"), { code: ATTENDANCE_CLOSED });
-      }
       await sql`DELETE FROM used_verifications WHERE expires_at < now() - interval '1 hour'`;
       await sql`
         INSERT INTO used_verifications (verification_id, expires_at)
@@ -174,8 +177,11 @@ export async function listInstitutions(): Promise<string[]> {
   return rows.map((r) => r.institution);
 }
 
-/** Error code thrown by insertSubmission when attendance is closed. */
-export const ATTENDANCE_CLOSED = "ATTENDANCE_CLOSED";
+/** Advisory-lock key serialising check-ins against open/close changes (arbitrary, app-wide). */
+export const ATTENDANCE_LOCK_KEY = 7_201_001;
+
+/** updated_by of the migration's default row — deliberately not a valid admin username. */
+export const DEFAULT_SETTING_ACTOR = "(default)";
 
 /** Postgres "undefined_table" — the schema migration hasn't been applied to this database. */
 export function isUndefinedTable(err: unknown): boolean {
@@ -189,11 +195,12 @@ function parseAttendanceOpen(value: unknown): boolean {
   return false;
 }
 
-async function attendanceOpenLocked(sql: postgres.TransactionSql): Promise<boolean> {
+/** Current setting inside a transaction (call after taking the advisory lock). */
+async function readAttendanceOpen(sql: postgres.TransactionSql): Promise<boolean> {
   try {
     // Savepoint: if the table doesn't exist yet, only this statement is rolled back.
     const rows = await sql.savepoint(
-      (sp) => sp<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'attendance_open' FOR SHARE`,
+      (sp) => sp<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'attendance_open'`,
     );
     return rows.length === 0 ? true : parseAttendanceOpen(rows[0].value);
   } catch (err) {
@@ -219,7 +226,7 @@ export async function getAttendanceStatus(): Promise<AttendanceStatus> {
       SELECT value, updated_at, updated_by FROM app_settings WHERE key = 'attendance_open'`;
     // No row, or only the migration's default row → never changed by an admin
     if (!row) return { open: true, updatedAt: null, updatedBy: null };
-    const changedByAdmin = row.updatedBy !== "system";
+    const changedByAdmin = row.updatedBy !== DEFAULT_SETTING_ACTOR;
     return {
       open: parseAttendanceOpen(row.value),
       updatedAt: changedByAdmin ? row.updatedAt : null,
@@ -231,9 +238,20 @@ export async function getAttendanceStatus(): Promise<AttendanceStatus> {
   }
 }
 
-/** Open or close attendance, with an audit log entry — in one transaction. */
-export async function setAttendanceOpen(open: boolean, actor: string): Promise<void> {
-  await db().begin(async (sql) => {
+/**
+ * Open or close attendance, with an audit log entry — in one transaction, under the
+ * exclusive advisory lock (waits for in-flight check-ins; later ones then see the change).
+ * Setting the value it already has changes nothing: no audit entry, "last changed" kept.
+ * Returns whether the value actually changed.
+ */
+export async function setAttendanceOpen(open: boolean, actor: string): Promise<boolean> {
+  return db().begin(async (sql) => {
+    await sql`SELECT pg_advisory_xact_lock(${ATTENDANCE_LOCK_KEY}::bigint)`;
+    const [current] = await sql<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'attendance_open'`;
+    const currentOpen = current ? parseAttendanceOpen(current.value) : true;
+    // A malformed stored value is always rewritten, even though it already reads as "closed"
+    if (currentOpen === open && (!current || typeof current.value === "boolean")) return false;
+
     await sql`
       INSERT INTO app_settings (key, value, updated_at, updated_by)
       VALUES ('attendance_open', ${sql.json(open)}, now(), ${actor})
@@ -241,5 +259,6 @@ export async function setAttendanceOpen(open: boolean, actor: string): Promise<v
     await sql`
       INSERT INTO admin_audit_log (actor, action, details)
       VALUES (${actor}, ${open ? "attendance_opened" : "attendance_closed"}, ${sql.json({ open })})`;
-  });
+    return true;
+  }) as Promise<boolean>;
 }

@@ -72,8 +72,14 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     await (globalThis as { sql?: postgres.Sql }).sql?.end();
   });
 
+  const resetSetting = () =>
+    admin`INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, '(default)')
+          ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_by = '(default)'`;
+
+  // Every test starts open, so one failing closed-state test can't cascade into the others.
   beforeEach(async () => {
     await admin`TRUNCATE submissions, used_verifications, admin_audit_log`;
+    await resetSetting();
   });
 
   let n = 0;
@@ -189,12 +195,7 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     expect(log.map((r) => `${r.actor}:${r.action}`)).toEqual(["master:attendance_closed", "admin:attendance_opened"]);
   });
 
-  const resetSetting = () =>
-    admin`INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, 'system')
-          ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_by = 'system'`;
-
   it("the attendance switch is all-or-nothing with its audit entry", async () => {
-    await resetSetting();
     // Make only the SECOND statement (the audit insert) fail, so a missing transaction would show
     await admin`ALTER TABLE admin_audit_log ADD CONSTRAINT test_block_close CHECK (action <> 'attendance_closed')`;
     try {
@@ -205,41 +206,81 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     expect((await dbmod.getAttendanceStatus()).open).toBe(true); // setting write was rolled back too
   });
 
-  it("the migration's default row counts as open and 'never changed'", async () => {
-    await resetSetting();
+  it("the default row counts as open and 'never changed' — and 'system' is just a username", async () => {
     expect(await dbmod.getAttendanceStatus()).toEqual({ open: true, updatedAt: null, updatedBy: null });
+    await dbmod.setAttendanceOpen(false, "system"); // a real admin who happens to be called "system"
+    expect(await dbmod.getAttendanceStatus()).toMatchObject({ open: false, updatedBy: "system" });
   });
 
-  it("reads the setting strictly: a non-boolean value is treated as closed", async () => {
+  it("setting the current value again is a no-op: no audit entry, 'last changed' kept", async () => {
+    expect(await dbmod.setAttendanceOpen(true, "admin")).toBe(false); // already open (default)
+    expect(await dbmod.getAttendanceStatus()).toMatchObject({ open: true, updatedBy: null });
+    expect(await dbmod.setAttendanceOpen(false, "master")).toBe(true);
+    expect(await dbmod.setAttendanceOpen(false, "admin")).toBe(false); // stale dashboard, same value
+    expect(await dbmod.getAttendanceStatus()).toMatchObject({ open: false, updatedBy: "master" });
+    expect(await count("admin_audit_log")).toBe(1);
+  });
+
+  it("reads the setting strictly: a non-boolean value is treated as closed (and can be repaired)", async () => {
     await admin`UPDATE app_settings SET value = '"false"'::jsonb, updated_by = 'manual' WHERE key = 'attendance_open'`;
     expect((await dbmod.getAttendanceStatus()).open).toBe(false);
-    await resetSetting();
+    expect(await dbmod.setAttendanceOpen(false, "admin")).toBe(true); // rewrites the malformed value
+    expect((await admin`SELECT value FROM app_settings WHERE key = 'attendance_open'`)[0].value).toBe(false);
   });
 
   it("while closed, insertSubmission refuses check-ins and doesn't consume the verification", async () => {
     await dbmod.setAttendanceOpen(false, "master");
-    const c = checkIn();
-    await expect(dbmod.insertSubmission(c)).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" });
+    await expect(dbmod.insertSubmission(checkIn())).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" });
     expect(await count("submissions")).toBe(0);
     expect(await count("used_verifications")).toBe(0);
-    await resetSetting();
   });
 
-  it("no race: a check-in in flight when attendance is closed is refused, not stored", async () => {
-    await resetSetting();
-    let insertSettled = false;
-    let pendingInsert!: Promise<unknown>;
+  it("the closed check applies to every insert, not only verified check-ins", async () => {
+    await dbmod.setAttendanceOpen(false, "master");
+    await expect(dbmod.insertSubmission(checkIn({ verificationId: null }))).rejects.toMatchObject({
+      code: "ATTENDANCE_CLOSED",
+    });
+  });
+
+  /** A close in progress (lock held, change written, not yet committed) while a check-in arrives. */
+  async function raceCheckInAgainstClose(writeClose: (tx: postgres.TransactionSql) => Promise<unknown>) {
+    let settled = false;
+    let pending!: Promise<unknown>;
     await admin.begin(async (tx) => {
-      // The admin's close is in progress (row updated, not yet committed)…
-      await tx`UPDATE app_settings SET value = 'false'::jsonb, updated_by = 'master' WHERE key = 'attendance_open'`;
-      // …when a check-in arrives: it must wait for the decision instead of reading the old value.
-      pendingInsert = dbmod.insertSubmission(checkIn()).finally(() => (insertSettled = true));
+      await tx`SELECT pg_advisory_xact_lock(${dbmod.ATTENDANCE_LOCK_KEY}::bigint)`;
+      await writeClose(tx);
+      pending = dbmod.insertSubmission(checkIn()).finally(() => (settled = true));
       await new Promise((r) => setTimeout(r, 500));
-      expect(insertSettled).toBe(false); // blocked on the setting row
-    }); // commit the close
-    await expect(pendingInsert).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" });
+      expect(settled).toBe(false); // the check-in waits for the close to finish…
+    });
+    await expect(pending).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" }); // …then sees it
     expect(await count("submissions")).toBe(0);
-    await resetSetting();
+  }
+
+  it("no race: a check-in arriving during a close is refused, not stored", async () => {
+    await raceCheckInAgainstClose((tx) =>
+      tx`UPDATE app_settings SET value = 'false'::jsonb, updated_by = 'master' WHERE key = 'attendance_open'`,
+    );
+  });
+
+  it("no race even when the settings row doesn't exist yet", async () => {
+    await admin`DELETE FROM app_settings`;
+    await raceCheckInAgainstClose((tx) =>
+      tx`INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'false'::jsonb, 'master')`,
+    );
+  });
+
+  it("a close waits for check-ins already in flight (they complete first)", async () => {
+    let closed = false;
+    await admin.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock_shared(${dbmod.ATTENDANCE_LOCK_KEY}::bigint)`; // a check-in mid-flight
+      const closing = dbmod.setAttendanceOpen(false, "master").then(() => (closed = true));
+      await new Promise((r) => setTimeout(r, 500));
+      expect(closed).toBe(false);
+      void closing;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(closed).toBe(true);
   });
 
   it("getLastClearAll returns null when nothing has been cleared", async () => {
