@@ -2,6 +2,7 @@ import "server-only";
 import postgres from "postgres";
 import { getDatabaseUrl, getDisplayTimezone } from "./config";
 import { attendanceClosedError } from "./attendance-closed";
+import { hasErrorCode, PG } from "./pg-errors";
 import { connectionOptions } from "./db-options";
 import type { NewSubmission, Submission, SubmissionFilters, SubmissionStats } from "@/types/submission";
 
@@ -40,6 +41,12 @@ const COLUMNS = (sql: postgres.Sql | postgres.TransactionSql) => sql`
  */
 export async function insertSubmission(s: NewSubmission): Promise<Submission> {
   return db().begin(async (sql) => {
+    // Housekeeping first, outside the locked section, so it never lengthens the lock hold.
+    if (s.verificationId) {
+      await sql`DELETE FROM used_verifications WHERE expires_at < now() - interval '1 hour'`;
+    }
+    // Never wait more than 10 s for the lock (e.g. behind a stuck open/close); fail instead.
+    await sql`SET LOCAL lock_timeout = '10s'`;
     // Authoritative open/closed check for EVERY insert, inside this transaction.
     // A transaction-scoped shared advisory lock orders it against setAttendanceOpen (which
     // takes the same lock exclusively): a "close" waits for check-ins already in flight,
@@ -49,7 +56,6 @@ export async function insertSubmission(s: NewSubmission): Promise<Submission> {
     if (!(await readAttendanceOpen(sql))) throw attendanceClosedError();
 
     if (s.verificationId) {
-      await sql`DELETE FROM used_verifications WHERE expires_at < now() - interval '1 hour'`;
       await sql`
         INSERT INTO used_verifications (verification_id, expires_at)
         VALUES (${s.verificationId}, ${s.verificationExpiresAt ?? new Date(Date.now() + 10 * 60 * 1000)})`;
@@ -185,13 +191,18 @@ export const DEFAULT_SETTING_ACTOR = "(default)";
 
 /** Postgres "undefined_table" — the schema migration hasn't been applied to this database. */
 export function isUndefinedTable(err: unknown): boolean {
-  return (err as { code?: string } | null)?.code === "42P01";
+  return hasErrorCode(err, PG.UNDEFINED_TABLE);
 }
 
-/** Strict: only a stored JSON boolean decides; anything else is treated as closed (and logged). */
+let warnedMalformedSetting = false;
+
+/** Strict: only a stored JSON boolean decides; anything else is treated as closed (logged once per process). */
 function parseAttendanceOpen(value: unknown): boolean {
   if (typeof value === "boolean") return value;
-  console.warn("[settings] attendance_open has a non-boolean value; treating attendance as closed:", value);
+  if (!warnedMalformedSetting) {
+    warnedMalformedSetting = true;
+    console.warn("[settings] attendance_open has a non-boolean value; treating attendance as closed:", value);
+  }
   return false;
 }
 
@@ -239,6 +250,20 @@ export async function getAttendanceStatus(): Promise<AttendanceStatus> {
 }
 
 /**
+ * For employee-facing reads (the attendance page and the verify step): if the setting
+ * can't be read (e.g. a brief DB outage), assume open. Check-in stays authoritative —
+ * insertSubmission re-checks inside its own transaction.
+ */
+export async function isAttendanceOpenOrDefault(context: string): Promise<boolean> {
+  try {
+    return (await getAttendanceStatus()).open;
+  } catch (err) {
+    console.error(`[${context}] could not read attendance status; assuming open`, err);
+    return true;
+  }
+}
+
+/**
  * Open or close attendance, with an audit log entry — in one transaction, under the
  * exclusive advisory lock (waits for in-flight check-ins; later ones then see the change).
  * Setting the value it already has changes nothing: no audit entry, "last changed" kept.
@@ -246,6 +271,9 @@ export async function getAttendanceStatus(): Promise<AttendanceStatus> {
  */
 export async function setAttendanceOpen(open: boolean, actor: string): Promise<boolean> {
   return db().begin(async (sql) => {
+    // Waits for in-flight check-ins, but at most 10 s: while this waits, new check-ins queue
+    // behind it, so a stuck check-in must not be able to stall everyone (fails with 55P03).
+    await sql`SET LOCAL lock_timeout = '10s'`;
     await sql`SELECT pg_advisory_xact_lock(${ATTENDANCE_LOCK_KEY}::bigint)`;
     const [current] = await sql<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'attendance_open'`;
     const currentOpen = current ? parseAttendanceOpen(current.value) : true;

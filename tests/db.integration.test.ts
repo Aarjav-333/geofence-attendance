@@ -242,16 +242,26 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     });
   });
 
+  /** Resolve once another session is queued on the attendance advisory lock (no fixed sleeps). */
+  async function waitForLockWaiter(tx: postgres.TransactionSql, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const [{ n }] = await tx`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+      if (n > 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error("expected a session to be waiting on the attendance lock");
+  }
+
   /** A close in progress (lock held, change written, not yet committed) while a check-in arrives. */
   async function raceCheckInAgainstClose(writeClose: (tx: postgres.TransactionSql) => Promise<unknown>) {
-    let settled = false;
     let pending!: Promise<unknown>;
     await admin.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(${dbmod.ATTENDANCE_LOCK_KEY}::bigint)`;
       await writeClose(tx);
-      pending = dbmod.insertSubmission(checkIn()).finally(() => (settled = true));
-      await new Promise((r) => setTimeout(r, 500));
-      expect(settled).toBe(false); // the check-in waits for the close to finish…
+      pending = dbmod.insertSubmission(checkIn());
+      pending.catch(() => {}); // asserted below; avoid an unhandled rejection meanwhile
+      await waitForLockWaiter(tx); // the check-in is blocked, waiting for the close to finish…
     });
     await expect(pending).rejects.toMatchObject({ code: "ATTENDANCE_CLOSED" }); // …then sees it
     expect(await count("submissions")).toBe(0);
@@ -271,16 +281,26 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
   });
 
   it("a close waits for check-ins already in flight (they complete first)", async () => {
-    let closed = false;
+    let closing!: Promise<boolean>;
     await admin.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock_shared(${dbmod.ATTENDANCE_LOCK_KEY}::bigint)`; // a check-in mid-flight
-      const closing = dbmod.setAttendanceOpen(false, "master").then(() => (closed = true));
-      await new Promise((r) => setTimeout(r, 500));
-      expect(closed).toBe(false);
-      void closing;
+      closing = dbmod.setAttendanceOpen(false, "master");
+      closing.catch(() => {});
+      await waitForLockWaiter(tx); // the close is queued behind the in-flight check-in
     });
-    await new Promise((r) => setTimeout(r, 300));
-    expect(closed).toBe(true);
+    await expect(closing).resolves.toBe(true); // …and completes once that check-in has finished
+    expect((await dbmod.getAttendanceStatus()).open).toBe(false);
+  });
+
+  it("a close gives up after 10 s instead of hanging behind a stuck check-in", { timeout: 20_000 }, async () => {
+    const started = Date.now();
+    await admin.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock_shared(${dbmod.ATTENDANCE_LOCK_KEY}::bigint)`; // stuck check-in
+      await expect(dbmod.setAttendanceOpen(false, "master")).rejects.toMatchObject({ code: "55P03" });
+    });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(9_500);
+    expect((await dbmod.getAttendanceStatus()).open).toBe(true); // nothing changed
+    expect(await count("admin_audit_log")).toBe(0);
   });
 
   it("getLastClearAll returns null when nothing has been cleared", async () => {

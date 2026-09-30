@@ -124,6 +124,3 @@ CREATE TABLE IF NOT EXISTS app_settings (
 -- advisory lock, so correctness doesn't depend on this row existing.
 INSERT INTO app_settings (key, value, updated_by) VALUES ('attendance_open', 'true'::jsonb, '(default)')
 ON CONFLICT (key) DO NOTHING;
--- The previous migration marked its default row 'system'; relabel only that untouched default.
-UPDATE app_settings SET updated_by = '(default)'
-WHERE key = 'attendance_open' AND updated_by = 'system' AND value = 'true'::jsonb;

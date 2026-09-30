@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verifyLocation } from "@/lib/attendance-service";
 import { getGeofenceConfig, getLowAccuracyThreshold, getMaxAccuracy, getSessionSecret } from "@/lib/config";
-import { getAttendanceStatus } from "@/lib/db";
+import { isAttendanceOpenOrDefault } from "@/lib/db";
 import { json, readJsonBody, tooManyRequests } from "@/lib/http";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
@@ -9,19 +9,6 @@ import type { VerifyResponse } from "@/types/submission";
 
 // Generous: a whole office often shares one public IP (NAT / mobile carrier CGNAT).
 const limiter = createRateLimiter({ limit: 300, windowMs: 10 * 60 * 1000 });
-
-/**
- * Closed → no verification is issued. If the setting can't be read (e.g. a DB blip) we
- * assume open: check-in re-checks it authoritatively inside its own transaction.
- */
-async function attendanceOpenOrAssumeOpen(): Promise<boolean> {
-  try {
-    return (await getAttendanceStatus()).open;
-  } catch (err) {
-    console.error("[attendance/verify] could not read attendance status; assuming open", err);
-    return true;
-  }
-}
 
 /**
  * Step 1 of attendance: server-side geofence check of a raw GPS fix.
@@ -41,7 +28,7 @@ export async function POST(request: NextRequest) {
       maxAccuracy: getMaxAccuracy(),
       lowAccuracyThreshold: getLowAccuracyThreshold(),
       secret: getSessionSecret(),
-      isOpen: attendanceOpenOrAssumeOpen, // read only for otherwise-valid requests
+      isOpen: () => isAttendanceOpenOrDefault("attendance/verify"), // read only for otherwise-valid requests
     });
     if (!r.ok) {
       return json<VerifyResponse>({ ok: false, error: r.error, code: r.code, fieldErrors: r.fieldErrors }, r.status);

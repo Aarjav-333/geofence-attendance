@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AttendanceClosed } from "@/components/attendance/attendance-closed";
 import { Spinner } from "@/components/ui/spinner";
 import { formatDistance } from "@/lib/geo";
@@ -59,7 +59,21 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
   const [submitting, setSubmitting] = useState(false);
   const [touched, setTouched] = useState<Set<EmployeeField>>(new Set());
 
+  // One location check at a time: a double-tap must not start two GPS reads / verify calls
+  // whose results race each other.
+  const detecting = useRef(false);
+
   async function detectLocation() {
+    if (detecting.current) return;
+    detecting.current = true;
+    try {
+      await runLocationCheck();
+    } finally {
+      detecting.current = false;
+    }
+  }
+
+  async function runLocationCheck() {
     setFormError(null);
     if (!window.isSecureContext) {
       setPhase({ k: "error", message: "Location is only available over a secure (HTTPS) connection. Please open the attendance link again." });

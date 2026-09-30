@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { getAdminSession } from "@/lib/auth";
 import { clearAllSubmissions, isUndefinedTable, setAttendanceOpen } from "@/lib/db";
+import { hasErrorCode, PG } from "@/lib/pg-errors";
 import { redirect } from "next/navigation";
 import { authenticate } from "@/lib/admin-accounts";
 import { getAdminAccounts, getSessionSecret } from "@/lib/config";
@@ -81,7 +82,6 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
     deleted = await clearAllSubmissions(session.sub); // also writes the audit log entry
   } catch (err) {
     console.error("[admin] clear all attendance data failed", err);
-    const pg = err as { code?: string };
     // The whole clear is one transaction, so these specific failures mean nothing was deleted.
     if (isUndefinedTable(err)) {
       // undefined_table: the admin_audit_log migration hasn't been applied to this database
@@ -91,7 +91,7 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
         error: "The database schema is out of date, so nothing was cleared. Run `npm run db:migrate` against this database, then try again.",
       };
     }
-    if (pg.code === "55P03") {
+    if (hasErrorCode(err, PG.LOCK_NOT_AVAILABLE)) {
       // lock_not_available: another session held row locks for more than 10 s
       return {
         ok: false,
@@ -142,13 +142,14 @@ export async function setAttendanceAccepting(open: unknown): Promise<AttendanceT
     changed = await setAttendanceOpen(open, session.sub); // also writes the audit entry (if changed)
   } catch (err) {
     console.error("[admin] attendance toggle failed", err);
-    const missingTable = isUndefinedTable(err);
     return {
       ok: false,
       code: "SERVER_ERROR",
-      error: missingTable
+      error: isUndefinedTable(err)
         ? "The database schema is out of date, so attendance was not changed. Run `npm run db:migrate`, then try again."
-        : "Could not change attendance. Refresh the page to see the current state.",
+        : hasErrorCode(err, PG.LOCK_NOT_AVAILABLE)
+          ? "Attendance is busy (check-ins still being saved), so it was not changed. Try again in a moment."
+          : "Could not change attendance. Refresh the page to see the current state.",
     };
   }
 

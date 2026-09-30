@@ -1,5 +1,6 @@
 import { evaluateGeofence, type GeofenceConfig, type GeofenceResult } from "./geo";
 import { ATTENDANCE_CLOSED, ATTENDANCE_CLOSED_MESSAGE, isAttendanceClosedError } from "./attendance-closed";
+import { hasErrorCode, PG } from "./pg-errors";
 import { signToken, verifyToken } from "./signed-token";
 import { checkInSchema, fieldErrors, locationSchema, type LocationInput } from "./validation";
 import type { NewSubmission, Submission } from "@/types/submission";
@@ -254,7 +255,7 @@ export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDep
   } catch (err) {
     // Raised by the store when attendance is closed (checked inside the insert transaction)
     if (isAttendanceClosedError(err)) return closedResult();
-    if ((err as { code?: string }).code === "23505") {
+    if (hasErrorCode(err, PG.UNIQUE_VIOLATION)) {
       return {
         ok: false,
         status: 409,
