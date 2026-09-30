@@ -167,3 +167,39 @@ export async function listInstitutions(): Promise<string[]> {
     SELECT DISTINCT institution FROM submissions WHERE institution IS NOT NULL ORDER BY institution`;
   return rows.map((r) => r.institution);
 }
+
+export interface AttendanceStatus {
+  open: boolean;
+  updatedAt: Date | null;
+  updatedBy: string | null;
+}
+
+/**
+ * Whether check-ins are currently accepted (admin-controlled). Defaults to open when
+ * the setting has never been changed — or when the app_settings table doesn't exist
+ * yet (migration not applied), so an un-migrated database keeps working as before.
+ */
+export async function getAttendanceStatus(): Promise<AttendanceStatus> {
+  try {
+    const [row] = await db()<{ value: unknown; updatedAt: Date; updatedBy: string }[]>`
+      SELECT value, updated_at, updated_by FROM app_settings WHERE key = 'attendance_open'`;
+    if (!row) return { open: true, updatedAt: null, updatedBy: null };
+    return { open: row.value !== false, updatedAt: row.updatedAt, updatedBy: row.updatedBy };
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return { open: true, updatedAt: null, updatedBy: null };
+    throw err;
+  }
+}
+
+/** Open or close attendance, with an audit log entry — in one transaction. */
+export async function setAttendanceOpen(open: boolean, actor: string): Promise<void> {
+  await db().begin(async (sql) => {
+    await sql`
+      INSERT INTO app_settings (key, value, updated_at, updated_by)
+      VALUES ('attendance_open', ${sql.json(open)}, now(), ${actor})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`;
+    await sql`
+      INSERT INTO admin_audit_log (actor, action, details)
+      VALUES (${actor}, ${open ? "attendance_opened" : "attendance_closed"}, ${sql.json({ open })})`;
+  });
+}

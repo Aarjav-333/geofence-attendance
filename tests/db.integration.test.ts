@@ -175,6 +175,26 @@ describe.skipIf(!TEST_URL)("database (integration)", () => {
     expect(await count("submissions")).toBe(1);
   });
 
+  it("attendance is open by default, and closing/reopening is persisted and audited", async () => {
+    await admin`DELETE FROM app_settings`;
+    expect(await dbmod.getAttendanceStatus()).toEqual({ open: true, updatedAt: null, updatedBy: null });
+
+    await dbmod.setAttendanceOpen(false, "master");
+    expect(await dbmod.getAttendanceStatus()).toMatchObject({ open: false, updatedBy: "master" });
+
+    await dbmod.setAttendanceOpen(true, "admin");
+    expect(await dbmod.getAttendanceStatus()).toMatchObject({ open: true, updatedBy: "admin" });
+
+    const log = await admin`SELECT actor, action FROM admin_audit_log ORDER BY id`;
+    expect(log.map((r) => `${r.actor}:${r.action}`)).toEqual(["master:attendance_closed", "admin:attendance_opened"]);
+  });
+
+  it("the attendance switch is all-or-nothing with its audit entry", async () => {
+    await admin`DELETE FROM app_settings`;
+    await expect(dbmod.setAttendanceOpen(false, "x".repeat(65))).rejects.toBeTruthy(); // actor too long
+    expect((await dbmod.getAttendanceStatus()).open).toBe(true);
+  });
+
   it("getLastClearAll returns null when nothing has been cleared", async () => {
     expect(await dbmod.getLastClearAll()).toBeNull();
   });

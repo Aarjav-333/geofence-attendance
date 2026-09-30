@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
+import { AttendanceClosed } from "@/components/attendance/attendance-closed";
 import { Spinner } from "@/components/ui/spinner";
 import { formatDistance } from "@/lib/geo";
 import { employeeSchema, fieldErrors as toFieldErrors, validateEmployeeField, type EmployeeField } from "@/lib/validation";
@@ -21,7 +22,8 @@ type Phase =
       token: string;
       expiresAt: string;
     }
-  | { k: "done"; name: string; createdAt: string };
+  | { k: "done"; name: string; createdAt: string }
+  | { k: "closed" };
 
 const GEO_OPTIONS: PositionOptions = { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 };
 
@@ -93,7 +95,7 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
       const data = (await res.json().catch(() => null)) as VerifyResponse | null;
       if (!data) throw new Error("bad response");
       if (!data.ok) {
-        setPhase({ k: "error", message: data.error });
+        setPhase(data.code === "ATTENDANCE_CLOSED" ? { k: "closed" } : { k: "error", message: data.error });
         return;
       }
       if (data.status === "WITHIN_RANGE" && data.verificationToken && data.expiresAt) {
@@ -157,6 +159,8 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
       }
       if (data.code === "OUTSIDE_RANGE" && data.distanceMeters !== undefined) {
         setPhase({ k: "outside", distance: data.distanceMeters, radius: phase.radius, accuracy: phase.accuracy });
+      } else if (data.code === "ATTENDANCE_CLOSED") {
+        setPhase({ k: "closed" }); // closed by an admin while the form was open
       } else if (data.code === "VERIFICATION_REQUIRED" || data.code === "ALREADY_USED") {
         setPhase({ k: "idle", notice: `${data.error} Your details are kept.` });
       } else {
@@ -184,6 +188,8 @@ export function AttendanceFlow({ radiusMeters }: { radiusMeters: number }) {
     setTouched((t) => new Set(t).add(field));
     setErrors((errs) => ({ ...errs, [field]: validateEmployeeField(field, form[field]) ?? "" }));
   };
+
+  if (phase.k === "closed") return <AttendanceClosed />;
 
   if (phase.k === "done") {
     return (

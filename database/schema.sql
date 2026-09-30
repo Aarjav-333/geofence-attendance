@@ -109,3 +109,13 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
   details    jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_at_idx ON admin_audit_log (action, at DESC);
+
+-- ── v5: application settings ────────────────────────────────────────────────
+-- Admin-controlled runtime settings. `attendance_open` (boolean) decides whether
+-- check-ins are accepted; when the row is absent attendance is open.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key        text PRIMARY KEY CHECK (char_length(key) BETWEEN 1 AND 64),
+  value      jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text NOT NULL CHECK (char_length(updated_by) BETWEEN 1 AND 64)
+);

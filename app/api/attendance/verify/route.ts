@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verifyLocation } from "@/lib/attendance-service";
 import { getGeofenceConfig, getLowAccuracyThreshold, getMaxAccuracy, getSessionSecret } from "@/lib/config";
+import { getAttendanceStatus } from "@/lib/db";
 import { json, readJsonBody, tooManyRequests } from "@/lib/http";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest) {
       maxAccuracy: getMaxAccuracy(),
       lowAccuracyThreshold: getLowAccuracyThreshold(),
       secret: getSessionSecret(),
+      attendanceOpen: (await getAttendanceStatus()).open,
     });
     if (!r.ok) {
       return json<VerifyResponse>({ ok: false, error: r.error, code: r.code, fieldErrors: r.fieldErrors }, r.status);

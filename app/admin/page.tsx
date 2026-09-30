@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AttendanceToggle } from "@/components/admin/attendance-toggle";
 import { ClearAllData } from "@/components/admin/clear-all-data";
 import { AdminFilters } from "@/components/admin/filters";
 import { SubmissionsMap } from "@/components/admin/submissions-map-loader";
@@ -8,7 +9,7 @@ import { filtersToSearch, parseFilters } from "@/lib/admin-filters";
 import { requireAdmin } from "@/lib/auth";
 import { getGeofenceConfig } from "@/lib/config";
 import { formatDateTime } from "@/lib/datetime";
-import { getLastClearAll, getStats, listInstitutions, listSubmissions } from "@/lib/db";
+import { getAttendanceStatus, getLastClearAll, getStats, listInstitutions, listSubmissions } from "@/lib/db";
 import { logout } from "./actions";
 
 export const metadata: Metadata = { title: "Admin dashboard", robots: { index: false, follow: false } };
@@ -18,7 +19,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   const filters = parseFilters(await searchParams);
   const geofence = getGeofenceConfig();
 
-  const [stats, institutions, result, lastClear] = await Promise.all([
+  const [stats, institutions, result, lastClear, attendance] = await Promise.all([
     getStats(),
     listInstitutions(),
     listSubmissions(filters),
@@ -28,6 +29,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       console.error("[admin] could not read the audit log", err);
       return null;
     }),
+    getAttendanceStatus(),
   ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
 
@@ -63,6 +65,16 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
           </form>
         </div>
       </header>
+
+      <AttendanceToggle
+        key={String(attendance.open)}
+        open={attendance.open}
+        lastChanged={
+          attendance.updatedAt && attendance.updatedBy
+            ? `Last changed by ${attendance.updatedBy} on ${formatDateTime(attendance.updatedAt)}`
+            : null
+        }
+      />
 
       <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Summary">
         <Stat label="Total check-ins" value={stats.total} />

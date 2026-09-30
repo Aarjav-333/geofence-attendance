@@ -65,7 +65,12 @@ export type VerifyResponse =
       verificationToken?: string;
       expiresAt?: string;
     }
-  | { ok: false; error: string; code?: "POOR_ACCURACY" | "STALE_FIX" | "INVALID"; fieldErrors?: Record<string, string> };
+  | {
+      ok: false;
+      error: string;
+      code?: "POOR_ACCURACY" | "STALE_FIX" | "INVALID" | "ATTENDANCE_CLOSED";
+      fieldErrors?: Record<string, string>;
+    };
 
 /** Response of POST /api/attendance/check-in */
 export type CheckInResponse =
@@ -76,7 +81,7 @@ export type CheckInResponse =
   | {
       ok: false;
       error: string;
-      code?: "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | "INVALID";
+      code?: "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | "INVALID" | "ATTENDANCE_CLOSED";
       fieldErrors?: Record<string, string>;
       distanceMeters?: number;
     };

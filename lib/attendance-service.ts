@@ -26,6 +26,8 @@ export interface AttendanceConfig {
   /** Flag (but accept) fixes whose accuracy radius is worse than this (meters). */
   lowAccuracyThreshold: number;
   secret: string;
+  /** Admin switch: when false, no verifications are issued and no check-ins are stored. Default true. */
+  attendanceOpen?: boolean;
   now?: () => number;
 }
 
@@ -55,6 +57,8 @@ interface LocationClaims {
   exp: number; // epoch s
 }
 
+export const ATTENDANCE_CLOSED_MESSAGE = "Attendance is currently closed. Please check with your administrator.";
+
 /** Domain-separated key so these tokens can never be confused with admin sessions. */
 const tokenSecret = (secret: string) => `${secret}:attendance-location:v1`;
 
@@ -70,13 +74,16 @@ export type VerifyResult =
     }
   | {
       ok: false;
-      status: 400 | 422;
-      code: "INVALID" | "POOR_ACCURACY" | "STALE_FIX";
+      status: 400 | 403 | 422;
+      code: "INVALID" | "POOR_ACCURACY" | "STALE_FIX" | "ATTENDANCE_CLOSED";
       error: string;
       fieldErrors?: Record<string, string>;
     };
 
 export async function verifyLocation(body: unknown, cfg: AttendanceConfig): Promise<VerifyResult> {
+  if (cfg.attendanceOpen === false) {
+    return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
+  }
   const parsed = locationSchema.safeParse(body);
   if (!parsed.success) {
     return {
@@ -154,13 +161,17 @@ export type CheckInResult =
   | {
       ok: false;
       status: 400 | 401 | 403 | 409 | 422;
-      code: "INVALID" | "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED";
+      code: "INVALID" | "VERIFICATION_REQUIRED" | "OUTSIDE_RANGE" | "ALREADY_USED" | "ATTENDANCE_CLOSED";
       error: string;
       fieldErrors?: Record<string, string>;
       distanceMeters?: number;
     };
 
 export async function checkIn(body: unknown, meta: RequestMeta, deps: CheckInDeps): Promise<CheckInResult> {
+  // Checked first: a verification issued before attendance was closed must not get through.
+  if (deps.attendanceOpen === false) {
+    return { ok: false, status: 403, code: "ATTENDANCE_CLOSED", error: ATTENDANCE_CLOSED_MESSAGE };
+  }
   const parsed = checkInSchema.safeParse(body);
   if (!parsed.success) {
     const errors = fieldErrors(parsed.error);

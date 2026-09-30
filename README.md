@@ -38,6 +38,14 @@ on a protected dashboard.
 - Database `CHECK` constraints make it impossible to store a status that contradicts the stored distance, or a
   check-in that is incomplete or outside the geofence.
 
+**Open / close attendance** (admin dashboard)
+- An **Accept attendance** switch at the top of `/admin` opens or closes attendance for everyone, immediately.
+- While closed, `/attendance` shows **"Attendance Closed"** instead of the location step, and the API refuses both
+  location verification and check-in (`403 ATTENDANCE_CLOSED`). This includes someone who verified before it was
+  closed. It's enforced on the server, not just hidden in the page.
+- The setting is stored in the `app_settings` table (open by default). Every change is recorded in `admin_audit_log`,
+  and the dashboard shows who changed it last. Admin-only, verified server-side; `master` has the same access.
+
 **Workplace QR code** (`/admin/qr`, authenticated)
 - Shows a printable poster with a QR code that encodes only the public attendance URL
   (for example `https://geofence-attendance-eta.vercel.app/attendance`), with no location or personal data.

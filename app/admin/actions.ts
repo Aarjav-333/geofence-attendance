@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { getAdminSession } from "@/lib/auth";
-import { clearAllSubmissions } from "@/lib/db";
+import { clearAllSubmissions, setAttendanceOpen } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { authenticate } from "@/lib/admin-accounts";
 import { getAdminAccounts, getSessionSecret } from "@/lib/config";
@@ -114,6 +114,51 @@ export async function clearAllAttendance(): Promise<ClearAllResult> {
     console.error("[admin] clear all: revalidatePath failed (data was deleted)", err);
   }
   return { ok: true, deleted };
+}
+
+export type AttendanceToggleResult =
+  | { ok: true; open: boolean }
+  | { ok: false; code: "UNAUTHENTICATED" | "INVALID" | "SERVER_ERROR"; error: string };
+
+/**
+ * Open or close attendance. Admin-only, verified here on the server (server actions are
+ * reachable by direct POST). While closed, the attendance page shows "Attendance Closed"
+ * and the attendance API refuses new verifications and check-ins.
+ */
+export async function setAttendanceAccepting(open: unknown): Promise<AttendanceToggleResult> {
+  if (typeof open !== "boolean") return { ok: false, code: "INVALID", error: "Invalid request." };
+
+  let session;
+  try {
+    session = await getAdminSession();
+  } catch (err) {
+    console.error("[admin] attendance toggle: could not check the admin session", err);
+    return { ok: false, code: "SERVER_ERROR", error: "Server configuration error — attendance was not changed." };
+  }
+  if (!session) return { ok: false, code: "UNAUTHENTICATED", error: "Your session has expired. Please sign in again." };
+
+  try {
+    await setAttendanceOpen(open, session.sub); // also writes the audit log entry
+  } catch (err) {
+    console.error("[admin] attendance toggle failed", err);
+    const missingTable = (err as { code?: string }).code === "42P01";
+    return {
+      ok: false,
+      code: "SERVER_ERROR",
+      error: missingTable
+        ? "The database schema is out of date, so attendance was not changed. Run `npm run db:migrate`, then try again."
+        : "Could not change attendance. Refresh the page to see the current state.",
+    };
+  }
+
+  console.info(`[admin] ${session.sub} ${open ? "opened" : "closed"} attendance`);
+  try {
+    revalidatePath("/admin");
+    revalidatePath("/attendance");
+  } catch (err) {
+    console.error("[admin] attendance toggle: revalidatePath failed (setting was saved)", err);
+  }
+  return { ok: true, open };
 }
 
 export async function logout() {

@@ -229,3 +229,25 @@ describe("checkIn — authoritative server-side re-check and storage", () => {
     expect(insert).not.toHaveBeenCalled();
   });
 });
+
+describe("attendance open/closed switch", () => {
+  it("while closed, no verification is issued (even exactly at the workplace)", async () => {
+    const r = await verifyLocation({ ...TARGET, accuracy: 5, positionTimestamp: NOW }, deps({ attendanceOpen: false }).d);
+    expect(r).toMatchObject({ ok: false, status: 403, code: "ATTENDANCE_CLOSED" });
+  });
+
+  it("while closed, a verification issued earlier (while open) can't be used to check in", async () => {
+    const token = await tokenFor(10); // obtained while attendance was open
+    const { d, insert } = deps({ attendanceOpen: false });
+    const r = await checkIn({ ...EMPLOYEE, verificationToken: token }, META, d);
+    expect(r).toMatchObject({ ok: false, status: 403, code: "ATTENDANCE_CLOSED" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("open (explicitly or by default) behaves as before", async () => {
+    const token = await tokenFor(10);
+    const { d } = deps({ attendanceOpen: true });
+    expect((await checkIn({ ...EMPLOYEE, verificationToken: token }, META, d)).ok).toBe(true);
+    expect((await verifyLocation(fixAt(10), deps().d)).ok).toBe(true);
+  });
+});
